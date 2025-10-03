@@ -1,0 +1,35 @@
+theme: "dark"            # dark|light
+font_family: "Inter, system-ui, sans-serif"
+brand_color: "#56B3F1"
+text_color: "#EDEDED"
+bg_color: "#0B0B0E"
+heading_size: 64         # px
+body_size: 40
+margin_px: 96
+logo:
+  path: "examples/logo.png"
+  opacity: 0.85
+  width_px: 220
+  position: "bottom-right"   # bottom-right|top-right|bottom-left|top-left
+caption:
+  max_lines: 2
+  font_size: 40
+  stroke_px: 3
+  safe_bottom_pct: 12       # keep captions above 12% from bottom
+kenburns:
+  zoom_start: 1.05
+  zoom_end: 1.12
+  pan: "auto"               # auto|left|right|up|down
+  easing: "easeInOutSine"
+export:
+  fps: 30
+  crf: 18
+  preset: "medium"
+audio:
+  target_lufs: -14.0
+  music_db: -28
+  ducking:
+    threshold: -20
+    ratio: 8
+    attack_ms: 50
+    release_ms: 300

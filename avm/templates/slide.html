@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      --bg: {{ bg_color }};
+      --text: {{ text_color }};
+      --brand: {{ brand_color }};
+      --font: {{ font_family }};
+      --margin: {{ margin_px }}px;
+      --hsize: {{ heading_size }}px;
+      --bsize: {{ body_size }}px;
+    }
+    
+    html, body { 
+      margin: 0; 
+      padding: 0; 
+      width: 1920px; 
+      height: 1080px; 
+      background: var(--bg); 
+      color: var(--text); 
+      font-family: var(--font); 
+      overflow: hidden;
+    }
+    
+    .wrap { 
+      box-sizing: border-box; 
+      padding: var(--margin); 
+      display: flex; 
+      flex-direction: column; 
+      gap: 32px; 
+      height: 100%; 
+    }
+    
+    h1 { 
+      font-size: var(--hsize); 
+      line-height: 1.1; 
+      margin: 0; 
+      color: var(--text); 
+      font-weight: 700;
+    }
+    
+    h2 {
+      font-size: calc(var(--hsize) * 0.75);
+      line-height: 1.1;
+      margin: 0;
+      color: var(--text);
+      font-weight: 600;
+    }
+    
+    ul { 
+      font-size: var(--bsize); 
+      line-height: 1.35; 
+      margin: 0; 
+      padding-left: 1.2em; 
+    }
+    
+    li + li { 
+      margin-top: 10px; 
+    }
+    
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    
+    .content h1,
+    .content h2 {
+      margin-bottom: 20px;
+    }
+    
+    .content ul {
+      margin-top: 20px;
+    }
+    
+    .accent { 
+      height: 8px; 
+      width: 240px; 
+      background: var(--brand); 
+      border-radius: 4px; 
+    }
+    
+    .footer { 
+      margin-top: auto; 
+      opacity: 0.7; 
+      font-size: 28px; 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+    }
+    
+    .logo { 
+      position: relative; 
+      right: 0; 
+    }
+    
+    /* Code blocks */
+    pre {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 20px;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: calc(var(--bsize) * 0.8);
+      overflow: hidden;
+      margin: 20px 0;
+    }
+    
+    code {
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: calc(var(--bsize) * 0.9);
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    
+    /* Tables */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px 0;
+    }
+    
+    th, td {
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 12px;
+      text-align: left;
+    }
+    
+    th {
+      background: rgba(255, 255, 255, 0.1);
+      font-weight: 600;
+    }
+    
+    /* Blockquotes */
+    blockquote {
+      border-left: 4px solid var(--brand);
+      padding-left: 20px;
+      margin: 20px 0;
+      font-style: italic;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="accent"></div>
+    <div class="content">
+      <h1>{{ title }}</h1>
+      {{ content|safe }}
+    </div>
+    <div class="footer">
+      <div>{{ author or "" }}</div>
+      {% if logo_path %}
+      <img class="logo" src="{{ logo_path }}" style="width:{{ logo_width }}px; opacity:{{ logo_opacity }};">
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

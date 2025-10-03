@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thumbnail</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 1280px;
+            height: 720px;
+            background: {{ bg_color }};
+            color: {{ text_color }};
+            font-family: {{ font_family }};
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .container {
+            text-align: center;
+            max-width: 1000px;
+            padding: 0 40px;
+        }
+        
+        .title {
+            font-size: 72px;
+            font-weight: bold;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            color: {{ text_color }};
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .subtitle {
+            font-size: 36px;
+            color: {{ brand_color }};
+            opacity: 0.9;
+            font-weight: 500;
+        }
+        
+        .logo {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            width: {{ logo_width }}px;
+            opacity: {{ logo_opacity }};
+        }
+        
+        .accent-line {
+            width: 200px;
+            height: 6px;
+            background: {{ brand_color }};
+            margin: 0 auto 40px;
+            border-radius: 3px;
+        }
+        
+        /* Gradient overlay for better text readability */
+        .gradient-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, 
+                rgba(0, 0, 0, 0.1) 0%, 
+                rgba(0, 0, 0, 0.3) 100%);
+            pointer-events: none;
+        }
+        
+        /* Decorative elements */
+        .corner-accent {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 60px;
+            height: 60px;
+            background: {{ brand_color }};
+            opacity: 0.2;
+            border-radius: 50%;
+        }
+        
+        .corner-accent::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            background: {{ brand_color }};
+            border-radius: 50%;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="gradient-overlay"></div>
+    
+    {% if logo_path %}
+    <img src="{{ logo_path }}" alt="Logo" class="logo">
+    {% endif %}
+    
+    <div class="corner-accent"></div>
+    
+    <div class="container">
+        <div class="accent-line"></div>
+        <h1 class="title">{{ title }}</h1>
+        {% if subtitle %}
+        <p class="subtitle">{{ subtitle }}</p>
+        {% endif %}
+    </div>
+</body>
+</html>

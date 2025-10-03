@@ -1,0 +1,22 @@
+slug: "demo"
+title: "Demo Lesson: Introduction to Diffusion"
+author: "AVM Demo"
+watermark: true
+intro: "examples/intro.mp4"
+outro: "examples/outro.mp4"
+music: "examples/music.mp3"
+burn_captions: false          # false = soft subs
+slides:
+  theme: "dark"
+  background_image: null
+  max_chars_per_line: 52
+timeline:
+  method: "weighted"          # weighted|even
+  min_slide_sec: 5.0
+  max_slide_sec: 60.0
+  gap_sec: 0.25               # crossfade/transition spacing
+thumbnail:
+  title: "Diffusion Basics"
+  subtitle: "Random Motion & Concentration Gradients"
+  bg: "#10121A"
+  use_html: true
