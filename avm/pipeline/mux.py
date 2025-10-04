@@ -65,12 +65,13 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
                 cmd.extend(["-map", "0:v:0"])  # Video from first input
                 cmd.extend(["-map", "1:a:0"])  # Voice from second input
             
-            # Audio encoding settings
+            # Audio encoding settings - AAC at 48kHz stereo with limiter
             cmd.extend([
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-ar", "48000",
-                "-ac", "2"  # Ensure stereo
+                "-ac", "2",  # Ensure stereo
+                "-af", "alimiter=limit=-1.0"  # True peak limiter to -1.0 dBTP
             ])
             
             # Video encoding settings (copy to preserve quality)
@@ -92,10 +93,8 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
             return duration
             
     except subprocess.CalledProcessError as e:
-        error_msg = f"FFmpeg muxing failed: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg stderr: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise MuxError(f"FFmpeg muxing failed: {stderr_output}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
     except Exception as e:

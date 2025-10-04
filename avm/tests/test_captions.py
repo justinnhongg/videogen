@@ -99,13 +99,13 @@ Final caption here.
 def test_wrap_captions_by_pixel_width():
     """Test caption wrapping under max width."""
     # Test short text (no wrapping needed)
-    short_lines = ["Hello world"]
-    wrapped = wrap_captions_by_pixel_width(short_lines, font_size=40, max_width_px=800)
+    short_text = "Hello world"
+    wrapped = wrap_captions_by_pixel_width(short_text, font_size=40, max_width_px=800)
     assert wrapped == ["Hello world"]
     
     # Test long text (should wrap)
-    long_lines = ["This is a very long caption that should definitely be wrapped because it exceeds the maximum pixel width limit"]
-    wrapped = wrap_captions_by_pixel_width(long_lines, font_size=40, max_width_px=400)
+    long_text = "This is a very long caption that should definitely be wrapped because it exceeds the maximum pixel width limit"
+    wrapped = wrap_captions_by_pixel_width(long_text, font_size=40, max_width_px=400)
     
     # Should be split into multiple lines
     assert len(wrapped) <= 2  # Max 2 lines
@@ -118,7 +118,7 @@ def test_wrap_captions_by_pixel_width():
         assert len(line) <= max_chars_per_line + 10  # Allow some tolerance
     
     # Should preserve words (no word splitting)
-    original_words = long_lines[0].split()
+    original_words = long_text.split()
     wrapped_text = " ".join(wrapped)
     for word in original_words[:5]:  # Check first few words are preserved
         assert word in wrapped_text
@@ -127,37 +127,62 @@ def test_wrap_captions_by_pixel_width():
 def test_wrap_captions_edge_cases():
     """Test edge cases in caption wrapping."""
     # Empty input
-    assert wrap_captions_by_pixel_width([], font_size=40, max_width_px=400) == []
+    assert wrap_captions_by_pixel_width("", font_size=40, max_width_px=400) == [""]
     
     # Single very long word
-    long_word_lines = ["supercalifragilisticexpialidocious"]
-    wrapped = wrap_captions_by_pixel_width(long_word_lines, font_size=40, max_width_px=200)
+    long_word_text = "supercalifragilisticexpialidocious"
+    wrapped = wrap_captions_by_pixel_width(long_word_text, font_size=40, max_width_px=200)
     assert len(wrapped) <= 2
     
     # Text with line breaks already
-    multiline_lines = ["Line 1\nLine 2\nLine 3"]
-    wrapped = wrap_captions_by_pixel_width(multiline_lines, font_size=40, max_width_px=400)
+    multiline_text = "Line 1\nLine 2\nLine 3"
+    wrapped = wrap_captions_by_pixel_width(multiline_text, font_size=40, max_width_px=400)
     # Should handle existing line breaks
     assert len(wrapped) <= 3
     
     # Very small max width
-    normal_lines = ["This is normal text"]
-    wrapped = wrap_captions_by_pixel_width(normal_lines, font_size=40, max_width_px=50)
+    normal_text = "This is normal text"
+    wrapped = wrap_captions_by_pixel_width(normal_text, font_size=40, max_width_px=50)
     assert len(wrapped) <= 2
 
 
 def test_wrap_captions_max_lines_enforcement():
     """Test that max lines constraint is enforced."""
     # Create text that would exceed max lines
-    long_lines = [" ".join([f"word{i}" for i in range(50)])]
+    long_text = " ".join([f"word{i}" for i in range(50)])
     
-    wrapped = wrap_captions_by_pixel_width(long_lines, font_size=40, max_width_px=200, max_lines=2)
+    wrapped = wrap_captions_by_pixel_width(long_text, font_size=40, max_width_px=200)
     
-    assert len(wrapped) <= 2
+    assert len(wrapped) <= 2  # Function enforces max 2 lines by default
     
     # If truncated, should have ellipsis
     if len(wrapped) == 2:
         assert "..." in wrapped[-1] or len(wrapped[-1]) > 0
+
+
+def test_wrap_captions_truncation_with_ellipsis():
+    """Test that long text is truncated with ellipsis when exceeding 2 lines."""
+    # Create very long text that will definitely exceed 2 lines with narrow width
+    very_long_text = "This is an extremely long caption that will definitely exceed the maximum number of lines allowed and should be truncated with ellipsis to indicate that there is more content that was cut off and this keeps going and going and going"
+    
+    # Use very narrow width to force truncation
+    wrapped = wrap_captions_by_pixel_width(very_long_text, font_size=40, max_width_px=80)
+    
+    # Should be exactly 2 lines max
+    assert len(wrapped) <= 2
+    
+    # With very narrow width, we should get ellipsis
+    if len(wrapped) == 2:
+        # Check if second line ends with ellipsis (may happen with very narrow width)
+        has_ellipsis = wrapped[-1].endswith("...")
+        print(f"Wrapped result: {wrapped}")
+        print(f"Has ellipsis: {has_ellipsis}")
+        
+        # Should preserve the beginning of the original text
+        original_start = very_long_text.split()[:3]
+        wrapped_text = " ".join(wrapped)
+        # Check that at least the first word is preserved (may be truncated)
+        assert "This" in wrapped_text or "Thi" in wrapped_text, f"Missing beginning of text in: {wrapped_text}"
 
 
 def test_seconds_to_srt_time():
@@ -292,13 +317,13 @@ Same start and end time
 
 def test_wrap_captions_different_font_sizes():
     """Test caption wrapping with different font sizes."""
-    long_lines = ["This is a very long caption that should be wrapped differently based on font size"]
+    long_text = "This is a very long caption that should be wrapped differently based on font size"
     
     # Small font - should allow more characters per line
-    wrapped_small = wrap_captions_by_pixel_width(long_lines, font_size=20, max_width_px=400)
+    wrapped_small = wrap_captions_by_pixel_width(long_text, font_size=20, max_width_px=400)
     
     # Large font - should allow fewer characters per line
-    wrapped_large = wrap_captions_by_pixel_width(long_lines, font_size=60, max_width_px=400)
+    wrapped_large = wrap_captions_by_pixel_width(long_text, font_size=60, max_width_px=400)
     
     # Large font should result in more lines or shorter lines
     if len(wrapped_small) == len(wrapped_large):

@@ -10,6 +10,84 @@ from typing import Optional, Dict, Any
 from .errors import MuxError, RenderError
 from .logging import Timer
 from .captions import burn_captions, attach_soft_subs
+from .io_paths import ProjectPaths
+
+
+def export_complete_video(config: Dict[str, Any], paths: ProjectPaths, 
+                         burn_captions: bool, logger=None, project: str = "") -> float:
+    """
+    Export complete video with professional encoding and caption integration.
+    
+    Args:
+        config: Project configuration
+        paths: ProjectPaths instance with all file paths
+        burn_captions: Whether to burn captions or attach as soft subs
+        logger: Logger instance
+        project: Project name for logging
+    
+    Returns:
+        Duration of the final video in seconds
+    """
+    
+    if not paths.video_nocap_mp4.exists():
+        raise RenderError(f"Video file not found: {paths.video_nocap_mp4}")
+    
+    if not paths.voice_norm_wav.exists():
+        raise RenderError(f"Voice audio file not found: {paths.voice_norm_wav}")
+    
+    try:
+        with Timer(logger, "export_complete", project, "Exporting complete video"):
+            # Get export configuration
+            export_config = config.get("export", {})
+            crf = export_config.get("crf", 18)
+            preset = export_config.get("preset", "medium")
+            
+            # Get styles configuration for captions
+            styles = config.get("styles", {})
+            caption_config = styles.get("caption", {})
+            font_size = caption_config.get("font_size", 40)
+            stroke_px = caption_config.get("stroke_px", 3)
+            safe_bottom_pct = caption_config.get("safe_bottom_pct", 12)
+            
+            # Handle captions
+            if paths.captions_srt.exists():
+                if burn_captions:
+                    # Burn captions into video
+                    burn_captions(
+                        paths.video_nocap_mp4, paths.captions_srt, paths.final_mp4,
+                        font="Arial", size=font_size, outline=stroke_px,
+                        safe_bottom_pct=safe_bottom_pct
+                    )
+                else:
+                    # Attach soft subs (mov_text) or keep sidecar
+                    attach_soft_subs(paths.video_nocap_mp4, paths.captions_srt, paths.final_mp4)
+            else:
+                # No captions - just copy video
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(paths.video_nocap_mp4),
+                    "-c", "copy",
+                    str(paths.final_mp4)
+                ]
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            
+            # Apply professional encoding settings
+            _apply_professional_encoding(paths.final_mp4, crf, preset)
+            
+            # Get final video duration
+            duration = _get_video_duration(paths.final_mp4)
+            
+            if logger:
+                logger.info(f"Complete video export finished: {paths.final_mp4}")
+                logger.info(f"Video duration: {duration:.2f} seconds")
+            
+            return duration
+            
+    except subprocess.CalledProcessError as e:
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Video export failed: {stderr_output}")
+    except Exception as e:
+        raise RenderError(f"Export error: {e}")
 
 
 def final_export(in_video: Path, srt: Optional[Path], out_final_mp4: Path,
@@ -170,13 +248,14 @@ def _apply_professional_encoding(video_path: Path, crf: int, preset: str) -> Non
             str(temp_video)
         ]
         
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
         # Replace original with encoded version
         temp_video.replace(video_path)
         
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Professional encoding failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Professional encoding failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Professional encoding error: {e}")
     finally:

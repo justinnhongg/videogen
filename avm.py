@@ -24,7 +24,8 @@ from avm.pipeline.transcribe import (
     normalize_wav, run_whisper, check_whisper_availability, get_audio_duration
 )
 from avm.pipeline.slides import render_slides, check_playwright_installation
-from avm.pipeline.assemble import assemble_video, get_slide_durations_from_timeline, create_simple_timeline
+from avm.pipeline.assemble import assemble_video, load_timeline_from_json
+from avm.pipeline.timeline import build_timeline, save_timeline_to_json, _parse_slides_for_token_counts
 from avm.pipeline.export import export_complete_video
 from avm.pipeline.thumb import generate_thumbnail
 from avm.pipeline.doctor import doctor
@@ -102,7 +103,7 @@ def cmd_transcribe(args) -> None:
     
     # Check if we can skip this step
     manifest = load_manifest(paths.build_dir)
-    if should_skip_step("transcribe", manifest, [paths.audio_wav], args.force):
+    if should_skip_step([paths.audio_wav], [paths.captions_srt, paths.captions_words_json], args.force):
         logger.info(f"Transcription already complete for {args.project}")
         return
     
@@ -117,10 +118,10 @@ def cmd_transcribe(args) -> None:
             normalized_audio,
             paths.captions_srt,
             paths.captions_words_json,
-            model=args.model,
-            language=args.language,
-            use_gpu=args.gpu,
-            threads=args.threads
+            args.model,
+            args.language,
+            args.gpu,
+            args.threads
         )
         
         # Update manifest
@@ -128,7 +129,7 @@ def cmd_transcribe(args) -> None:
             manifest, "transcribe",
             [paths.audio_wav],
             [paths.captions_srt, paths.captions_words_json],
-            timer.duration
+            timer.duration_ms if hasattr(timer, 'duration_ms') else 0
         )
         save_manifest(paths.build_dir, manifest)
     
@@ -145,18 +146,19 @@ def cmd_slides(args) -> None:
     styles_path = Path(args.styles) if args.styles else Path(args.root) / "styles.yml"
     cli_overrides = create_cli_overrides(args)
     config = load_merged_config(styles_path, paths.project_dir, cli_overrides)
-    validate_config(config)
     
-    # Check if slides file exists
+    # Skip validation for slides command since it doesn't need audio processing
+    # validate_config(config)
+    
+    # Check if slides file exists (fallback will be created if missing)
     slides_md = Path(args.md) if args.md else paths.slides_md
     if not slides_md.exists():
-        logger.warning(f"No slides file found: {slides_md}")
-        return
+        logger.info(f"No slides file found: {slides_md}, will create fallback slide")
     
     # Check if we can skip this step
     manifest = load_manifest(paths.build_dir)
     
-    if should_skip_step("slides", manifest, [slides_md, styles_path], args.force):
+    if should_skip_step("slides", manifest, [slides_md, styles_path], [paths.slides_dir / "slide_001.png"], force=args.force):
         logger.info(f"Slides already rendered for {args.project}")
         return
     
@@ -174,7 +176,7 @@ def cmd_slides(args) -> None:
             manifest, "slides",
             [slides_md, styles_path],
             png_files,
-            timer.duration
+            timer.duration_ms if hasattr(timer, 'duration_ms') else 0
         )
         save_manifest(paths.build_dir, manifest)
     
@@ -198,24 +200,43 @@ def cmd_render(args) -> None:
     if not slide_images:
         raise RenderError("No slide images found. Run slides command first.")
     
-    # Get slide durations
-    if paths.captions_words_json.exists():
-        durations = get_slide_durations_from_timeline(
-            paths.captions_words_json, slide_images, 
-            method=get_config_value(config, 'timeline.method', 'weighted'),
-            min_slide_sec=get_config_value(config, 'timeline.min_slide_sec', 5.0),
-            max_slide_sec=get_config_value(config, 'timeline.max_slide_sec', 60.0),
-            gap_sec=get_config_value(config, 'timeline.gap_sec', 0.25)
+    # Get or create timeline
+    timeline_method = get_config_value(config, 'timeline.method', 'weighted')
+    
+    if paths.timeline_json.exists() and timeline_method != 'even':
+        # Use existing timeline if available and method is weighted
+        logger.info("Using existing timeline.json")
+        timeline_segments = load_timeline_from_json(paths.timeline_json)
+        durations = [segment["end"] - segment["start"] for segment in timeline_segments["segments"]]
+    elif paths.captions_words_json.exists() and timeline_method == 'weighted':
+        # Create timeline from captions for weighted method
+        logger.info("Creating timeline from captions for weighted method")
+        token_counts = _parse_slides_for_token_counts(paths.slides_md)
+        total_duration = get_audio_duration(paths.audio_wav)
+        
+        # Add project directory to config for token parsing
+        config_with_project = config.copy()
+        config_with_project["project_dir"] = paths.project_dir
+        
+        timeline_segments = build_timeline(
+            len(slide_images), total_duration, 'weighted', config_with_project
         )
+        save_timeline_to_json(timeline_segments, paths.timeline_json)
+        durations = [segment["end"] - segment["start"] for segment in timeline_segments]
     else:
-        # Fallback to simple timeline
-        durations = create_simple_timeline(slide_images, min_sec=5.0)
-    
-    # Extend durations to match slide count
-    while len(durations) < len(slide_images):
-        durations.append(durations[-1] if durations else 5.0)
-    
-    durations = durations[:len(slide_images)]  # Trim to match slide count
+        # Use even method (default fallback)
+        logger.info(f"Creating timeline using {timeline_method} method")
+        total_duration = get_audio_duration(paths.audio_wav) if paths.audio_wav.exists() else len(slide_images) * 10.0
+        
+        # Add project directory to config for consistency
+        config_with_project = config.copy()
+        config_with_project["project_dir"] = paths.project_dir
+        
+        timeline_segments = build_timeline(
+            len(slide_images), total_duration, 'even', config_with_project
+        )
+        save_timeline_to_json(timeline_segments, paths.timeline_json)
+        durations = [segment["end"] - segment["start"] for segment in timeline_segments]
     
     with Timer(logger, "assemble", args.project, "Assembling video") as timer:
         # Get watermark path
@@ -696,7 +717,7 @@ def main() -> int:
     
     try:
         # Check dependencies for most commands
-        if args.command not in ["doctor", "storyboard"]:
+        if args.command not in ["doctor", "storyboard", "slides"]:
             check_dependencies(args)
         
         # Route to appropriate command

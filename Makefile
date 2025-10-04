@@ -37,10 +37,10 @@ test:
 	@echo "Running AVM tests..."
 	@echo ""
 	@echo "Testing timeline generation..."
-	python -m pytest avm/tests/test_timeline.py -v
+	python -m pytest avm/tests/test_timeline.py -q
 	@echo ""
 	@echo "Testing caption processing..."
-	python -m pytest avm/tests/test_captions.py -v
+	python -m pytest avm/tests/test_captions.py -q
 	@echo ""
 	@echo "Testing pipeline imports..."
 	python -c "import avm.pipeline; print('✅ Pipeline imports successful')"

@@ -50,14 +50,18 @@ def compose_visual_track(slide_pngs: List[Path], timeline: Dict[str, Any],
         raise RenderError("No slide images provided")
     
     config = config or {}
-    # Use the project's build directory for temp files
+    # Write video_nocap.mp4 to the build directory
     if project_path:
-        temp_dir = project_path / "build" / "temp"
+        build_dir = project_path / "build"
+        temp_dir = build_dir / "temp"
     else:
-        temp_dir = Path("build/temp")
+        build_dir = Path("build")
+        temp_dir = build_dir / "temp"
+    
+    build_dir.mkdir(parents=True, exist_ok=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
     
-    video_nocap_path = temp_dir / "video_nocap.mp4"
+    video_nocap_path = build_dir / "video_nocap.mp4"
     
     try:
         with Timer(logger, "compose_visual", project, f"Composing visual track with {len(slide_pngs)} slides"):
@@ -152,7 +156,7 @@ def _add_crossfades(slide_clips, gap_sec: float, fps: int):
     
     Args:
         slide_clips: List of slide clips
-        gap_sec: Gap duration in seconds
+        gap_sec: Gap duration in seconds (not used for crossfade timing)
         fps: Video frame rate
     
     Returns:
@@ -161,31 +165,21 @@ def _add_crossfades(slide_clips, gap_sec: float, fps: int):
     if len(slide_clips) <= 1:
         return slide_clips
     
-    # Calculate crossfade duration (12 frames)
+    # Fixed crossfade duration (exactly 12 frames)
     crossfade_duration = 12.0 / fps
-    
-    # Ensure gap is at least as long as crossfade
-    if gap_sec < crossfade_duration:
-        gap_sec = crossfade_duration
     
     result_clips = []
     
     for i, clip in enumerate(slide_clips):
         if i == 0:
-            # First clip: add gap at the end
-            if gap_sec > 0:
-                # Extend duration by gap
-                extended_clip = clip.set_duration(clip.duration + gap_sec)
-                result_clips.append(extended_clip)
-            else:
-                result_clips.append(clip)
+            # First clip: no crossfade
+            result_clips.append(clip)
         else:
             # Subsequent clips: add crossfade with previous clip
             prev_clip = result_clips[-1]
             
             # Create crossfade
             crossfade_start = prev_clip.duration - crossfade_duration
-            crossfade_end = crossfade_duration
             
             # Fade out previous clip
             prev_clip_fade = prev_clip.fadeout(crossfade_duration)

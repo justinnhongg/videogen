@@ -86,65 +86,62 @@ def save_captions_srt(captions: List[Dict[str, Any]], srt_path: Path) -> None:
         raise RenderError(f"Failed to save SRT file: {e}")
 
 
-def wrap_captions_by_pixel_width(lines: List[str], font_size: int, max_width_px: int, max_lines: int = 2) -> List[str]:
+def wrap_captions_by_pixel_width(text: str, font_size: int, max_width_px: int) -> List[str]:
     """
-    Wrap captions by pixel width using approximate character width.
+    Wrap captions by pixel width using greedy break on spaces.
     
     Args:
-        lines: List of text lines to wrap
+        text: Text to wrap
         font_size: Font size in pixels
         max_width_px: Maximum width in pixels
     
     Returns:
-        List of wrapped lines
+        List of wrapped lines (max 2 lines)
     """
     # Approximate character width based on font size
     # This is a rough estimate - actual width varies by font and character
     approx_char_width = font_size * 0.6  # Rough estimate: 60% of font size
     max_chars_per_line = int(max_width_px / approx_char_width)
     
-    wrapped_lines = []
+    # Clean up text
+    text = re.sub(r'\s+', ' ', text.strip())
     
-    for line in lines:
-        # Clean up text
-        line = re.sub(r'\s+', ' ', line.strip())
+    if len(text) <= max_chars_per_line:
+        return [text]
+    
+    # Split into words
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        # Check if adding this word would exceed max_chars_per_line
+        test_line = current_line + (" " if current_line else "") + word
         
-        if len(line) <= max_chars_per_line:
-            wrapped_lines.append(line)
-            continue
-        
-        # Split into words
-        words = line.split()
-        current_line = ""
-        
-        for word in words:
-            # Check if adding this word would exceed max_chars_per_line
-            test_line = current_line + (" " if current_line else "") + word
-            
-            if len(test_line) <= max_chars_per_line:
-                current_line = test_line
+        if len(test_line) <= max_chars_per_line:
+            current_line = test_line
+        else:
+            # Save current line and start new one
+            if current_line:
+                lines.append(current_line)
+                current_line = word
             else:
-                # Save current line and start new one
-                if current_line:
-                    wrapped_lines.append(current_line)
-                    current_line = word
-                else:
-                    # Single word longer than max_chars_per_line, split it
-                    wrapped_lines.append(word[:max_chars_per_line])
-                    current_line = word[max_chars_per_line:]
-        
-        # Add final line
-        if current_line:
-            wrapped_lines.append(current_line)
+                # Single word longer than max_chars_per_line, split it
+                lines.append(word[:max_chars_per_line])
+                current_line = word[max_chars_per_line:]
     
-    # Limit to max_lines and add ellipsis if needed
-    if len(wrapped_lines) > max_lines:
-        wrapped_lines = wrapped_lines[:max_lines]
-        # Add ellipsis to last line if we truncated
-        if len(wrapped_lines) == max_lines:
-            wrapped_lines[-1] = wrapped_lines[-1].rstrip() + "..."
+    # Add final line
+    if current_line:
+        lines.append(current_line)
     
-    return wrapped_lines
+    # Enforce ≤2 lines limit
+    if len(lines) > 2:
+        lines = lines[:2]
+        # Truncate second line and append "..." if needed
+        if len(lines[1]) > max_chars_per_line - 3:
+            lines[1] = lines[1][:max_chars_per_line - 3] + "..."
+    
+    return lines
 
 
 def position_captions_above_safe_bottom(captions: List[Dict[str, Any]], 
@@ -193,8 +190,7 @@ def position_captions_above_safe_bottom(captions: List[Dict[str, Any]],
 
 
 def burn_captions(video_in: Path, srt: Path, video_out: Path, 
-                 font: str, size: int, outline: int, safe_bottom_pct: int,
-                 styles: Optional[Dict[str, Any]] = None) -> None:
+                 font: str, size: int, outline: int, safe_bottom_pct: int) -> None:
     """
     Burn captions into video using ffmpeg subtitles filter with force_style.
     
@@ -205,8 +201,7 @@ def burn_captions(video_in: Path, srt: Path, video_out: Path,
         font: Font name
         size: Font size in pixels
         outline: Outline width in pixels
-        safe_bottom_pct: Safe bottom percentage from styles.yml
-        styles: Optional styles configuration
+        safe_bottom_pct: Safe bottom percentage (e.g., 12% of 1080)
     """
     
     if not video_in.exists():
@@ -215,21 +210,20 @@ def burn_captions(video_in: Path, srt: Path, video_out: Path,
     if not srt.exists():
         raise RenderError(f"SRT file not found: {srt}")
     
-    styles = styles or {}
-    caption_config = styles.get("caption", {})
+    # Calculate MarginV from safe_bottom_pct of 1080
+    margin_v = int(1080 * safe_bottom_pct / 100)
     
-    # Get configuration values
-    font_color = styles.get("text_color", "#FFFFFF")
-    stroke_color = "#000000"  # Black stroke for contrast
+    # Increase MarginV by 5% if watermark uses bottom corner
+    # This is a placeholder - in practice, you'd check watermark config
+    # margin_v = int(margin_v * 1.05)  # Uncomment if watermark collision detected
     
     # Create subtitle filter with force_style
     filter_str = (
         f"subtitles={srt}:"
         f"force_style='FontName={font},FontSize={size},"
-        f"PrimaryColour={font_color.replace('#', '&H')},"
-        f"OutlineColour={stroke_color.replace('#', '&H')},"
-        f"Outline={outline},"
-        f"Alignment=2,MarginV={safe_bottom_pct}'"  # Bottom center with margin
+        f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+        f"Outline={outline},BorderStyle=1,"
+        f"Alignment=2,MarginV={margin_v}'"
     )
     
     cmd = [
@@ -241,9 +235,10 @@ def burn_captions(video_in: Path, srt: Path, video_out: Path,
     ]
     
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Failed to burn captions: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Failed to burn captions: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Caption burning error: {e}")
 
@@ -276,43 +271,30 @@ def attach_soft_subs(video_in: Path, srt: Path, video_out: Path) -> None:
     ]
     
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         # Success - mov_text subtitles attached
         
     except subprocess.CalledProcessError as e:
-        # mov_text failed, try alternative approaches
-        
-        # Option 1: Try with different subtitle codec
+        # mov_text failed, emit sidecar SRT
         try:
-            cmd_alt = [
+            cmd_copy = [
                 "ffmpeg", "-y",
                 "-i", str(video_in),
-                "-i", str(srt),
                 "-c", "copy",
-                "-c:s", "srt",
-                "-metadata:s:s:0", "language=eng",
                 str(video_out)
             ]
-            subprocess.run(cmd_alt, check=True, capture_output=True, text=True)
+            result = subprocess.run(cmd_copy, check=True, capture_output=True, text=True)
             
-        except subprocess.CalledProcessError:
-            # Option 2: Copy video and keep SRT as sidecar file
-            try:
-                cmd_copy = [
-                    "ffmpeg", "-y",
-                    "-i", str(video_in),
-                    "-c", "copy",
-                    str(video_out)
-                ]
-                subprocess.run(cmd_copy, check=True, capture_output=True, text=True)
-                
-                # Copy SRT file as sidecar
-                sidecar_srt = video_out.with_suffix('.srt')
-                import shutil
-                shutil.copy2(srt, sidecar_srt)
-                
-            except Exception as copy_error:
-                raise RenderError(f"Failed to attach soft subtitles: {e.stderr}. Copy fallback also failed: {copy_error}")
+            # Copy SRT file as sidecar
+            sidecar_srt = video_out.with_suffix('.srt')
+            import shutil
+            shutil.copy2(srt, sidecar_srt)
+            
+        except subprocess.CalledProcessError as copy_error:
+            stderr_output = copy_error.stderr if copy_error.stderr else "No stderr captured"
+            raise RenderError(f"Failed to attach soft subtitles and create sidecar: {stderr_output}")
+        except Exception as copy_error:
+            raise RenderError(f"Failed to create sidecar SRT: {copy_error}")
 
 
 def create_caption_overlay_filter(captions: List[Dict[str, Any]], 

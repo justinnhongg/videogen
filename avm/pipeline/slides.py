@@ -33,18 +33,27 @@ from .errors import RenderError
 from .logging import Timer
 
 
-def check_playwright_installation() -> bool:
-    """Check if Playwright and Chromium are properly installed."""
+def check_playwright_installation() -> tuple[bool, str, str]:
+    """
+    Check if Playwright and Chromium are properly installed.
+    
+    Returns:
+        Tuple of (is_available, version_info, error_message)
+    """
     if not PLAYWRIGHT_AVAILABLE:
-        return False
+        return False, "Not installed", "Playwright package not installed. Install with: pip install playwright"
     
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
+            version = browser.version()
             browser.close()
-        return True
-    except Exception:
-        return False
+        return True, f"Chromium {version}", ""
+    except Exception as e:
+        error_msg = str(e)
+        if "chromium" in error_msg.lower() or "browser" in error_msg.lower():
+            return False, "Chromium not installed", "Chromium browser not found. Run: playwright install chromium"
+        return False, "Installation error", f"Playwright installation issue: {error_msg}"
 
 
 def render_slides(slides_md: Path, styles_yml: Path, template_html: Path,
@@ -69,10 +78,9 @@ def render_slides(slides_md: Path, styles_yml: Path, template_html: Path,
     if not JINJA2_AVAILABLE:
         raise RenderError("jinja2 is required for template rendering")
     
-    if not check_playwright_installation():
-        raise RenderError(
-            "Playwright not properly installed. Run: playwright install chromium"
-        )
+    is_available, version_info, error_msg = check_playwright_installation()
+    if not is_available:
+        raise RenderError(f"Playwright not properly installed: {error_msg}")
     
     with Timer(logger, "slides", project, f"Rendering slides from {slides_md.name}"):
         # Load styles and merge with project config
@@ -222,7 +230,7 @@ def _parse_slides(slides_md: Path) -> List[Dict[str, str]]:
 def _render_slide_with_retries(slide_data: Dict[str, str], styles: Dict[str, Any],
                               template, config: Dict[str, Any],
                               output_path: Path, slide_num: int, logger=None) -> Path:
-    """Render a single slide with retries for Playwright flakiness."""
+    """Render a single slide with 2 retries and exponential backoff for Playwright flakiness."""
     
     max_retries = 2
     last_error = None
@@ -233,9 +241,11 @@ def _render_slide_with_retries(slide_data: Dict[str, str], styles: Dict[str, Any
         except Exception as e:
             last_error = e
             if attempt < max_retries:
+                # Exponential backoff: 0.5s, 1.0s
+                backoff_delay = 0.5 * (2 ** attempt)
                 if logger:
-                    logger.warning(f"Slide {slide_num} render attempt {attempt + 1} failed, retrying: {e}")
-                time.sleep(0.5)  # Brief delay before retry
+                    logger.warning(f"Slide {slide_num} render attempt {attempt + 1} failed, retrying in {backoff_delay}s: {e}")
+                time.sleep(backoff_delay)
             else:
                 if logger:
                     logger.error(f"Slide {slide_num} failed after {max_retries + 1} attempts")
@@ -295,36 +305,55 @@ def _markdown_to_html(markdown_content: str) -> str:
 
 def _apply_text_wrapping(html_content: str, styles: Dict[str, Any]) -> str:
     """
-    Apply text wrapping based on max_chars_per_line setting.
-    Simple greedy wrap by pixel width using approximate character width.
+    Apply text wrapping based on pixel width using font size approximation.
+    Uses approximate character width based on font size to avoid overflow.
     """
     max_chars = styles.get("max_chars_per_line", 52)
     if max_chars <= 0:
         return html_content
     
+    # Calculate approximate character width based on font size
+    # This is a rough approximation - actual width depends on font metrics
+    body_size = styles.get("body_size", 40)
+    heading_size = styles.get("heading_size", 64)
+    
+    # Approximate character widths (in pixels) for common fonts
+    # These are rough estimates for proportional fonts
+    body_char_width = max(body_size * 0.6, 20)  # ~60% of font size for body text
+    heading_char_width = max(heading_size * 0.7, 30)  # ~70% of font size for headings
+    
+    # Calculate max characters based on slide width (1920px) minus margins
+    margin_px = styles.get("margin_px", 96)
+    available_width = 1920 - (2 * margin_px)  # Account for left and right margins
+    
+    max_body_chars = int(available_width / body_char_width)
+    max_heading_chars = int(available_width / heading_char_width)
+    
+    # Use the smaller of configured max_chars or calculated max
+    effective_max_chars = min(max_chars, max_body_chars)
+    
     # Simple text wrapping for basic content
-    # This is a basic implementation - for production, consider using a proper text layout engine
     lines = html_content.split('\n')
     wrapped_lines = []
     
     for line in lines:
-        if len(line.strip()) <= max_chars or line.strip().startswith('<'):
+        if len(line.strip()) <= effective_max_chars or line.strip().startswith('<'):
             # Keep short lines or HTML tags as-is
             wrapped_lines.append(line)
         else:
-            # Simple word wrapping
+            # Simple word wrapping with line breaks
             words = line.split()
             current_line = ""
             
             for word in words:
-                if len(current_line + " " + word) <= max_chars:
+                if len(current_line + " " + word) <= effective_max_chars:
                     if current_line:
                         current_line += " " + word
                     else:
                         current_line = word
                 else:
                     if current_line:
-                        wrapped_lines.append(current_line)
+                        wrapped_lines.append(current_line + "<br>")
                     current_line = word
             
             if current_line:

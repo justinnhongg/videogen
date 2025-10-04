@@ -182,8 +182,14 @@ def build_timeline(slide_count: int, total_sec: float, method: str, config: Dict
     total_gaps = gap_sec * max(0, slide_count - 1)
     content_duration = total_sec - total_gaps
     
-    # For now, use even distribution (token_counts would come from slides.md parsing)
-    token_counts = None  # Could be populated from slides.md analysis
+    # Get token counts for weighted method
+    token_counts = None
+    if method == "weighted":
+        # Try to get token counts from slides.md
+        project_dir = config.get("project_dir")
+        if project_dir:
+            slides_md = Path(project_dir) / "slides.md"
+            token_counts = _parse_slides_for_token_counts(slides_md)
     
     durations = compute_slide_durations(
         content_duration, slide_count, method,
@@ -213,6 +219,53 @@ def _get_pan_direction(slide_index: int) -> str:
     """Get pan direction for slide, alternating per slide."""
     directions = ["left", "right", "up", "down"]
     return directions[slide_index % len(directions)]
+
+
+def _parse_slides_for_token_counts(slides_md: Path) -> Optional[List[int]]:
+    """
+    Parse slides.md to extract token counts for weighted duration calculation.
+    
+    Args:
+        slides_md: Path to slides markdown file
+        
+    Returns:
+        List of token counts per slide, or None if parsing fails
+    """
+    if not slides_md.exists():
+        return None
+    
+    try:
+        with open(slides_md, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Split on ## headings (top-level)
+        sections = re.split(r'^##\s+(.+)$', content, flags=re.MULTILINE)
+        
+        token_counts = []
+        
+        # Handle first section (before any ##)
+        if sections[0].strip():
+            first_section = sections[0].strip()
+            # Remove title line and count tokens in content
+            content_without_title = re.sub(r'^#\s+.+$', '', first_section, flags=re.MULTILINE).strip()
+            if content_without_title:
+                # Simple token count (words)
+                tokens = len(re.findall(r'\S+', content_without_title))
+                token_counts.append(tokens)
+        
+        # Process remaining sections (## title + content pairs)
+        for i in range(1, len(sections), 2):
+            if i + 1 < len(sections):
+                content = sections[i + 1].strip()
+                if content:
+                    # Simple token count (words)
+                    tokens = len(re.findall(r'\S+', content))
+                    token_counts.append(tokens)
+        
+        return token_counts if token_counts else None
+        
+    except Exception:
+        return None
 
 
 def save_timeline_to_json(timeline_segments: List[Dict[str, Any]], output_path: Path) -> None:

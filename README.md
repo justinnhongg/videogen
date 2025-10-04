@@ -248,33 +248,152 @@ make help        # Show all available commands
 
 ## Troubleshooting
 
+### System Health Check
+Always start with the system health check:
+```bash
+make doctor
+# or
+python avm.py doctor
+```
+
+This will show you exactly what's missing and provide installation commands.
+
 ### Common Issues
 
-1. **FFmpeg not found**
-   ```bash
-   brew install ffmpeg  # macOS
-   sudo apt install ffmpeg  # Ubuntu
-   ```
+#### 1. **Python Version Issues**
+❌ **Problem**: Python version too old
+✅ **Solution**: AVM requires Python 3.11+
+```bash
+# Check version
+python --version
 
-2. **Playwright browser missing**
-   ```bash
-   make setup  # or: python -m playwright install chromium
-   ```
+# Install Python 3.11+ (macOS with Homebrew)
+brew install python@3.11
 
-3. **Whisper model download**
-   - Models are downloaded automatically on first use
-   - Ensure stable internet connection
+# Install Python 3.11+ (Ubuntu)
+sudo apt update
+sudo apt install python3.11 python3.11-pip python3.11-venv
+```
 
-4. **GPU acceleration not working**
-   - Check CUDA installation for NVIDIA GPUs
-   - Use `--gpu` flag to enable
+#### 2. **FFmpeg/FFprobe Missing**
+❌ **Problem**: Video processing tools not found
+✅ **Solution**: Install FFmpeg with codec support
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt update
+sudo apt install ffmpeg
+
+# Windows (using Chocolatey)
+choco install ffmpeg
+
+# Verify installation
+ffmpeg -version
+ffprobe -version
+```
+
+#### 3. **Whisper Transcription Issues**
+❌ **Problem**: No Whisper backend available
+✅ **Solution**: Install at least one Whisper backend
+```bash
+# Option 1: faster-whisper (recommended - faster)
+pip install faster-whisper
+
+# Option 2: openai-whisper (original)
+pip install openai-whisper
+
+# Option 3: Both for flexibility
+pip install faster-whisper openai-whisper
+
+# Verify installation
+python -c "from avm.pipeline.transcribe import check_whisper_availability; print(check_whisper_availability())"
+```
+
+#### 4. **Playwright Browser Missing**
+❌ **Problem**: Chromium browser not installed for slide rendering
+✅ **Solution**: Install Playwright browser
+```bash
+# Install Playwright and browser
+pip install playwright
+python -m playwright install chromium
+
+# Or use the Makefile
+make setup
+
+# Verify installation
+python -c "from avm.pipeline.slides import check_playwright_installation; print(check_playwright_installation())"
+```
+
+#### 5. **Font Issues for Captions**
+❌ **Problem**: System fonts not available for caption rendering
+✅ **Solution**: Install common fonts
+```bash
+# macOS
+brew install font-inter font-roboto
+
+# Ubuntu/Debian
+sudo apt install fonts-inter fonts-roboto fonts-liberation
+
+# Windows
+# Download and install Inter/Roboto fonts manually
+```
+
+#### 6. **GPU Acceleration Issues**
+❌ **Problem**: CUDA not available for faster-whisper
+✅ **Solution**: Check CUDA installation
+```bash
+# Check CUDA availability
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Install CUDA-enabled PyTorch (if needed)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Use CPU-only if GPU not available
+python avm.py all -p my-project  # GPU disabled by default
+```
+
+#### 7. **Memory Issues**
+❌ **Problem**: Out of memory during processing
+✅ **Solution**: Optimize settings
+```bash
+# Use smaller Whisper model
+python avm.py transcribe -p my-project --model small
+
+# Reduce video quality for faster encoding
+python avm.py render -p my-project --crf 23 --preset fast
+
+# Process in smaller chunks
+python avm.py transcribe -p my-project --threads 2
+```
+
+#### 8. **Permission Issues**
+❌ **Problem**: Cannot write to build directories
+✅ **Solution**: Fix file permissions
+```bash
+# Make sure you own the project directory
+sudo chown -R $USER:$USER avm/projects/
+
+# Ensure write permissions
+chmod -R 755 avm/projects/
+```
 
 ### Performance Tips
 
-- Use `--model small` for faster transcription
-- Enable GPU with `--gpu` if available
-- Use `--threads 8` for faster CPU processing
-- Set `--crf 20` for faster encoding (lower quality)
+- **Transcription Speed**: Use `--model small` for faster processing
+- **GPU Acceleration**: Enable with `--gpu` if CUDA available
+- **CPU Processing**: Use `--threads 8` for multi-core systems
+- **Video Encoding**: Set `--crf 20` for faster encoding (lower quality)
+- **Memory Usage**: Use smaller models and lower resolution for large files
+
+### Getting Help
+
+1. **Check System Health**: `make doctor`
+2. **Run Tests**: `make test`
+3. **Check Logs**: Use `--verbose` flag for detailed output
+4. **Clean Build**: `make clean` to remove corrupted artifacts
+5. **Force Rebuild**: Use `--force` flag to bypass caching
 
 ## Development
 

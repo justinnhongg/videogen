@@ -7,42 +7,11 @@
   "beats": [
     {
       "start": 0.0,
-      "end": 4.5,
-      "title": "Hello everyone and welcome to this demo video about AVM",
-      "bullets": [
-        "Hello everyone and welcome to this demo video about AVM"
-      ],
-      "latex": [],
-      "overlays": []
-    },
-    {
-      "start": 4.5,
-      "end": 9.0,
+      "end": 18.0,
       "title": "Hello everyone and welcome to this demo video about AVM t...",
       "bullets": [
         "Hello everyone and welcome to this demo video about AVM the Audio to Video Maker",
-        "Today we will learn about"
-      ],
-      "latex": [],
-      "overlays": []
-    },
-    {
-      "start": 9.0,
-      "end": 13.5,
-      "title": "the Audio to Video Maker",
-      "bullets": [
-        "the Audio to Video Maker",
-        "Today we will learn about creating professional videos from audio recordings"
-      ],
-      "latex": [],
-      "overlays": []
-    },
-    {
-      "start": 13.5,
-      "end": 18.0,
-      "title": "creating professional videos from audio recordings",
-      "bullets": [
-        "creating professional videos from audio recordings",
+        "Today we will learn about creating professional videos from audio recordings",
         "This process involves transcription and video assembly"
       ],
       "latex": [],

@@ -32,7 +32,17 @@ from .logging import Timer
 
 def check_whisper_availability() -> bool:
     """Check if any Whisper implementation is available."""
-    return FASTER_WHISPER_AVAILABLE or OPENAI_WHISPER_AVAILABLE
+    # Check for faster-whisper or openai-whisper imports
+    if FASTER_WHISPER_AVAILABLE or OPENAI_WHISPER_AVAILABLE:
+        return True
+    
+    # Check for whisper CLI
+    try:
+        result = subprocess.run(['whisper', '--help'], 
+                              capture_output=True, text=True, timeout=5)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
 
 
 def normalize_wav(in_path: Path, out_path: Path, target_dbfs: float = -14.0) -> None:
@@ -79,7 +89,7 @@ def normalize_wav(in_path: Path, out_path: Path, target_dbfs: float = -14.0) -> 
 
 
 def run_whisper(audio_wav: Path, out_srt: Path, out_words_json: Path, 
-                model_size: str, language: Optional[str], use_gpu: bool) -> None:
+                model_size: str, language: Optional[str], use_gpu: bool, threads: int = 0) -> None:
     """
     Run Whisper transcription.
     
@@ -104,13 +114,13 @@ def run_whisper(audio_wav: Path, out_srt: Path, out_words_json: Path,
     
     # Prefer faster-whisper if available
     if FASTER_WHISPER_AVAILABLE:
-        _run_faster_whisper(audio_wav, out_srt, out_words_json, model_size, language, use_gpu)
+        _run_faster_whisper(audio_wav, out_srt, out_words_json, model_size, language, use_gpu, threads)
     else:
-        _run_openai_whisper_shell(audio_wav, out_srt, out_words_json, model_size, language)
+        _run_openai_whisper_shell(audio_wav, out_srt, out_words_json, model_size, language, threads)
 
 
 def _run_faster_whisper(audio_wav: Path, out_srt: Path, out_words_json: Path,
-                       model_size: str, language: Optional[str], use_gpu: bool) -> None:
+                       model_size: str, language: Optional[str], use_gpu: bool, threads: int = 0) -> None:
     """Run faster-whisper directly."""
     
     device = "cuda" if use_gpu else "cpu"
@@ -125,7 +135,8 @@ def _run_faster_whisper(audio_wav: Path, out_srt: Path, out_words_json: Path,
             language=language,
             word_timestamps=True,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500)
+            vad_parameters=dict(min_silence_duration_ms=500),
+            num_workers=threads if threads > 0 else 1
         )
         
         # Convert to SRT format and collect word data
@@ -161,20 +172,57 @@ def _run_faster_whisper(audio_wav: Path, out_srt: Path, out_words_json: Path,
 
 
 def _run_openai_whisper_shell(audio_wav: Path, out_srt: Path, out_words_json: Path,
-                             model_size: str, language: Optional[str]) -> None:
-    """Run OpenAI Whisper via shell command."""
+                             model_size: str, language: Optional[str], threads: int = 0) -> None:
+    """Run OpenAI Whisper via shell command with word timing synthesis."""
     
-    # Create temporary script
+    # First try to use whisper CLI directly
+    try:
+        cmd = ["whisper", str(audio_wav), "--model", model_size, "--output_format", "srt"]
+        if language:
+            cmd.extend(["--language", language])
+        if threads > 0:
+            cmd.extend(["--threads", str(threads)])
+        
+        # Run whisper CLI
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        # The CLI creates a .srt file with the same name as input
+        expected_srt = audio_wav.with_suffix('.srt')
+        if expected_srt.exists():
+            # Move to our output location
+            expected_srt.rename(out_srt)
+        
+        # Generate word-level timing by synthesizing from SRT segments
+        _synthesize_word_timings(out_srt, out_words_json)
+        
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to Python script if CLI not available
+        _run_openai_whisper_python_script(audio_wav, out_srt, out_words_json, model_size, language, threads)
+
+
+def _run_openai_whisper_python_script(audio_wav: Path, out_srt: Path, out_words_json: Path,
+                                     model_size: str, language: Optional[str], threads: int) -> None:
+    """Run OpenAI Whisper using Python script as fallback."""
+    
     script_content = f'''
 import sys
 import json
 import whisper
+import re
+
+def format_time(seconds):
+    """Format time for SRT."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millisecs = int((seconds % 1) * 1000)
+    return f"{{hours:02d}}:{{minutes:02d}}:{{secs:02d}},{{millisecs:03d}}"
 
 try:
     # Load model
     model = whisper.load_model("{model_size}")
     
-    # Transcribe with word timestamps
+    # Transcribe with word timestamps if available
     result = model.transcribe("{audio_wav}", language="{language or None}", word_timestamps=True)
     
     # Generate SRT content
@@ -182,13 +230,14 @@ try:
     word_data = []
     
     for i, segment in enumerate(result["segments"], 1):
-        start_time = _format_time(segment["start"])
-        end_time = _format_time(segment["end"])
+        start_time = format_time(segment["start"])
+        end_time = format_time(segment["end"])
+        text = segment["text"].strip()
         
-        srt_content.append(f"{{i}}\\n{{start_time}} --> {{end_time}}\\n{{segment['text'].strip()}}\\n")
+        srt_content.append(f"{{i}}\\n{{start_time}} --> {{end_time}}\\n{{text}}\\n")
         
-        # Collect word data
-        if "words" in segment:
+        # Collect word data - synthesize if not available
+        if "words" in segment and segment["words"]:
             for word in segment["words"]:
                 word_data.append({{
                     "word": word["word"],
@@ -196,6 +245,22 @@ try:
                     "end": word["end"],
                     "prob": word.get("probability", 1.0)
                 }})
+        else:
+            # Synthesize word timings from segment text
+            words = re.findall(r'\\S+', text)
+            if words:
+                segment_duration = segment["end"] - segment["start"]
+                word_duration = segment_duration / len(words)
+                
+                for j, word in enumerate(words):
+                    word_start = segment["start"] + (j * word_duration)
+                    word_end = word_start + word_duration
+                    word_data.append({{
+                        "word": word,
+                        "start": word_start,
+                        "end": word_end,
+                        "prob": 1.0
+                    }})
     
     # Write SRT
     with open("{out_srt}", "w", encoding="utf-8") as f:
@@ -208,29 +273,74 @@ try:
 except Exception as e:
     print(f"Error: {{e}}", file=sys.stderr)
     sys.exit(1)
-
-def _format_time(seconds):
-    """Format time for SRT."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millisecs = int((seconds % 1) * 1000)
-    return f"{{hours:02d}}:{{minutes:02d}}:{{secs:02d}},{{millisecs:03d}}"
 '''
     
     try:
-        # Run the script
         result = subprocess.run([
             sys.executable, "-c", script_content
         ], check=True, capture_output=True, text=True)
         
     except subprocess.CalledProcessError as e:
-        error_msg = f"OpenAI Whisper shell command failed: {e}"
+        error_msg = f"OpenAI Whisper Python script failed: {e}"
         if e.stderr:
             error_msg += f"\nError output: {e.stderr}"
         raise TranscriptionError(error_msg)
     except FileNotFoundError:
         raise TranscriptionError("Python interpreter not found for Whisper execution.")
+
+
+def _synthesize_word_timings(srt_path: Path, words_json_path: Path) -> None:
+    """Synthesize word-level timings from SRT segments."""
+    import re
+    
+    word_data = []
+    
+    with open(srt_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Parse SRT segments
+    segments = re.split(r'\n\s*\n', content.strip())
+    
+    for segment in segments:
+        lines = segment.strip().split('\n')
+        if len(lines) >= 3:
+            # Parse timing
+            timing_line = lines[1]
+            time_match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})', timing_line)
+            if time_match:
+                start_time = _parse_srt_time(time_match.group(1))
+                end_time = _parse_srt_time(time_match.group(2))
+                text = ' '.join(lines[2:]).strip()
+                
+                # Split text into words and distribute timing
+                words = re.findall(r'\S+', text)
+                if words:
+                    segment_duration = end_time - start_time
+                    word_duration = segment_duration / len(words)
+                    
+                    for i, word in enumerate(words):
+                        word_start = start_time + (i * word_duration)
+                        word_end = word_start + word_duration
+                        word_data.append({
+                            "word": word,
+                            "start": word_start,
+                            "end": word_end,
+                            "prob": 1.0
+                        })
+    
+    # Write words JSON
+    with open(words_json_path, 'w', encoding='utf-8') as f:
+        json.dump(word_data, f, indent=2)
+
+
+def _parse_srt_time(time_str: str) -> float:
+    """Parse SRT time format to seconds."""
+    time_part, ms_part = time_str.split(',')
+    hours, minutes, seconds = map(int, time_part.split(':'))
+    milliseconds = int(ms_part)
+    
+    total_seconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 1000.0
+    return total_seconds
 
 
 def _format_srt_time(seconds: float) -> str:
@@ -245,7 +355,7 @@ def _format_srt_time(seconds: float) -> str:
 
 def get_audio_duration(audio_wav: Path) -> float:
     """
-    Get audio duration via ffprobe.
+    Get audio duration via ffprobe JSON output.
     
     Args:
         audio_wav: Path to audio file
@@ -256,19 +366,24 @@ def get_audio_duration(audio_wav: Path) -> float:
     try:
         cmd = [
             "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-            "-of", "csv=p=0", str(audio_wav)
+            "-of", "json", str(audio_wav)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        duration = float(result.stdout.strip())
+        
+        # Parse JSON output
+        data = json.loads(result.stdout)
+        duration = float(data["format"]["duration"])
+        
         if duration <= 0:
             raise TranscriptionError(f"Invalid audio duration: {duration}")
         return duration
+        
     except subprocess.CalledProcessError as e:
         error_msg = f"ffprobe failed: {e}"
         if e.stderr:
             error_msg += f"\nffprobe error: {e.stderr.decode('utf-8', errors='ignore')}"
         raise TranscriptionError(error_msg)
-    except ValueError as e:
+    except (ValueError, KeyError, json.JSONDecodeError) as e:
         raise TranscriptionError(f"Failed to parse audio duration: {e}")
     except FileNotFoundError:
         raise TranscriptionError("ffprobe not found. Please install FFmpeg.")
@@ -276,7 +391,7 @@ def get_audio_duration(audio_wav: Path) -> float:
 
 def transcribe_audio(audio_path: Path, output_srt: Path, output_words: Path,
                     model_size: str = "small", language: Optional[str] = None,
-                    use_gpu: bool = False, threads: int = 4,
+                    use_gpu: bool = False, threads: int = 0,
                     logger=None, project: str = "") -> None:
     """
     Transcribe audio file to SRT and word-level JSON.
@@ -309,7 +424,7 @@ def transcribe_audio(audio_path: Path, output_srt: Path, output_words: Path,
         # Run transcription
         run_whisper(
             normalized_audio, output_srt, output_words,
-            model_size, language, use_gpu
+            model_size, language, use_gpu, threads
         )
         
         # Clean up normalized audio
@@ -320,7 +435,7 @@ def transcribe_audio(audio_path: Path, output_srt: Path, output_words: Path,
 # Legacy function for backward compatibility
 def transcribe_with_cache(audio_path: Path, output_srt: Path, output_words: Path,
                          model_size: str = "small", language: Optional[str] = None,
-                         use_gpu: bool = False, force: bool = False,
+                         use_gpu: bool = False, threads: int = 0, force: bool = False,
                          logger=None, project: str = "") -> None:
     """
     Transcribe with caching support.
@@ -352,5 +467,5 @@ def transcribe_with_cache(audio_path: Path, output_srt: Path, output_words: Path
     # Run transcription
     transcribe_audio(
         audio_path, output_srt, output_words,
-        model_size, language, use_gpu, logger=logger, project=project
+        model_size, language, use_gpu, threads, logger=logger, project=project
     )

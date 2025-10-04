@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "total_duration": 59.99999999999999,
+  "slide_count": 5,
+  "segments": [
+    {
+      "index": 0,
+      "start": 0.0,
+      "end": 6.076190476190476,
+      "zoom_from": 1.05,
+      "zoom_to": 1.12,
+      "pan": "left"
+    },
+    {
+      "index": 1,
+      "start": 6.576190476190476,
+      "end": 22.595238095238095,
+      "zoom_from": 1.05,
+      "zoom_to": 1.12,
+      "pan": "right"
+    },
+    {
+      "index": 2,
+      "start": 23.095238095238095,
+      "end": 40.219047619047615,
+      "zoom_from": 1.05,
+      "zoom_to": 1.12,
+      "pan": "up"
+    },
+    {
+      "index": 3,
+      "start": 40.719047619047615,
+      "end": 52.87142857142857,
+      "zoom_from": 1.05,
+      "zoom_to": 1.12,
+      "pan": "down"
+    },
+    {
+      "index": 4,
+      "start": 53.37142857142857,
+      "end": 59.99999999999999,
+      "zoom_from": 1.05,
+      "zoom_to": 1.12,
+      "pan": "left"
+    }
+  ]
+}

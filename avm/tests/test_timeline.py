@@ -37,15 +37,15 @@ def test_compute_slide_durations_even():
         assert duration >= min_slide_sec
         assert duration <= max_slide_sec
     
-    # Durations should sum to total_sec (allowing for small floating point errors)
+    # Durations should sum to total_sec within 1ms precision
     total_duration = sum(durations)
-    assert abs(total_duration - total_sec) < 0.01, f"Sum {total_duration} != {total_sec}"
+    assert abs(total_duration - total_sec) < 0.001, f"Sum {total_duration} != {total_sec}"
     
     # For even distribution with no clamping needed, should be equal
     expected_even = total_sec / num_slides
     if min_slide_sec <= expected_even <= max_slide_sec:
         for duration in durations:
-            assert abs(duration - expected_even) < 0.01
+            assert abs(duration - expected_even) < 0.001
 
 
 def test_compute_slide_durations_even_with_clamping():
@@ -75,12 +75,12 @@ def test_compute_slide_durations_even_with_clamping():
     # we expect the algorithm to return the best possible approximation (40s total)
     total_duration = sum(durations)
     expected_max_total = max_slide_sec * num_slides
-    assert abs(total_duration - expected_max_total) < 0.01, f"Sum {total_duration} should be close to max possible {expected_max_total}"
+    assert abs(total_duration - expected_max_total) < 0.001, f"Sum {total_duration} should be close to max possible {expected_max_total}"
     
     # Since even split (30s each) exceeds max_slide_sec (20s), should be clamped to 20s
     expected_clamped = max_slide_sec
     for duration in durations:
-        assert abs(duration - expected_clamped) < 0.01
+        assert abs(duration - expected_clamped) < 0.001
 
 
 def test_compute_slide_durations_weighted():
@@ -110,9 +110,9 @@ def test_compute_slide_durations_weighted():
         assert duration >= min_slide_sec
         assert duration <= max_slide_sec
     
-    # Durations should sum to total_sec
+    # Durations should sum to total_sec within 1ms precision
     total_duration = sum(durations)
-    assert abs(total_duration - total_sec) < 0.01, f"Sum {total_duration} != {total_sec}"
+    assert abs(total_duration - total_sec) < 0.001, f"Sum {total_duration} != {total_sec}"
     
     # Slide with more tokens should get more time (if not clamped)
     # Slide 3 (30 tokens) should have >= Slide 2 (20 tokens) >= Slide 1 (10 tokens)
@@ -151,11 +151,11 @@ def test_compute_slide_durations_weighted_with_clamping():
     # we expect the algorithm to return the best possible approximation (40s total)
     total_duration = sum(durations)
     expected_max_total = max_slide_sec * num_slides
-    assert abs(total_duration - expected_max_total) < 0.01, f"Sum {total_duration} should be close to max possible {expected_max_total}"
+    assert abs(total_duration - expected_max_total) < 0.001, f"Sum {total_duration} should be close to max possible {expected_max_total}"
     
     # Both should be at max due to heavy clamping
     for duration in durations:
-        assert abs(duration - max_slide_sec) < 0.01
+        assert abs(duration - max_slide_sec) < 0.001
 
 
 def test_compute_slide_durations_edge_cases():
@@ -169,7 +169,7 @@ def test_compute_slide_durations_edge_cases():
         max_slide_sec=20.0
     )
     assert len(durations) == 1
-    assert abs(durations[0] - 15.0) < 0.01
+    assert abs(durations[0] - 15.0) < 0.001
     
     # Very short total duration
     durations = compute_slide_durations(
@@ -181,7 +181,7 @@ def test_compute_slide_durations_edge_cases():
     )
     assert len(durations) == 2
     assert all(d >= 1.0 for d in durations)
-    assert abs(sum(durations) - 2.0) < 0.01
+    assert abs(sum(durations) - 2.0) < 0.001
     
     # Zero tokens in weighted mode
     durations = compute_slide_durations(
@@ -193,7 +193,7 @@ def test_compute_slide_durations_edge_cases():
         token_counts=[0, 0]
     )
     assert len(durations) == 2
-    assert abs(sum(durations) - 10.0) < 0.01
+    assert abs(sum(durations) - 10.0) < 0.001
 
 
 def test_build_timeline():
@@ -236,7 +236,7 @@ def test_build_timeline():
     total_content_duration = sum(seg["end"] - seg["start"] for seg in timeline)
     expected_gaps = config["timeline"]["gap_sec"] * (slide_count - 1)
     total_with_gaps = total_content_duration + expected_gaps
-    assert abs(total_with_gaps - total_sec) < 0.1  # Should match total_sec including gaps
+    assert abs(total_with_gaps - total_sec) < 0.001  # Should match total_sec within 1ms precision
     
     # Check pan direction alternation
     pan_directions = [seg["pan"] for seg in timeline]

@@ -13,7 +13,7 @@ from .errors import RenderError
 
 def process_audio(voice_wav: Path, music_wav: Optional[Path], 
                   output_voice: Path, output_music: Path,
-                  config: Dict[str, Any], logger=None, project: str = "") -> None:
+                  config: Dict[str, Any], logger=None, project: str = "") -> Tuple[Path, Path]:
     """
     Process audio: two-pass loudnorm on voice, music ducking with sidechain compression.
     
@@ -41,6 +41,9 @@ def process_audio(voice_wav: Path, music_wav: Optional[Path],
         else:
             # Just produce normalized voice, create silent music track
             _create_silent_audio(output_music, _get_audio_duration(voice_wav))
+        
+        # Return paths for normalized voice and ducked music
+        return output_voice, output_music
             
     except Exception as e:
         raise RenderError(f"Audio processing failed: {e}")
@@ -92,10 +95,11 @@ def _normalize_voice_two_pass(voice_wav: Path, output_voice: Path,
             str(output_voice)
         ]
         
-        subprocess.run(apply_cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(apply_cmd, check=True, capture_output=True, text=True)
         
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Voice normalization failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Voice normalization failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Voice normalization error: {e}")
 
@@ -180,9 +184,10 @@ def _process_music_with_ducking(music_wav: Path, voice_wav: Path, output_music: 
     ]
     
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Music processing failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Music processing failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Music processing error: {e}")
 
@@ -205,9 +210,10 @@ def _create_silent_audio(output_path: Path, duration: float) -> None:
     ]
     
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Failed to create silent audio: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Failed to create silent audio: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Silent audio creation error: {e}")
 
@@ -235,7 +241,8 @@ def _get_audio_duration(audio_path: Path) -> float:
             raise ValueError("Empty duration output")
         return float(duration_str)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Failed to get audio duration: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Failed to get audio duration: {stderr_output}")
     except (ValueError, TypeError) as e:
         raise RenderError(f"Invalid duration value: {e}")
 

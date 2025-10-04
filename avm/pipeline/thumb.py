@@ -23,36 +23,35 @@ from jinja2 import Environment, FileSystemLoader
 from .errors import RenderError
 
 
-def generate_thumbnail(title: str, subtitle: Optional[str], brand_color: str, 
-                      logo_path: Optional[str], output_path: Path,
-                      styles: Optional[Dict[str, Any]] = None,
+def generate_thumbnail(config: Dict[str, Any], styles: Dict[str, Any], 
+                      output_path: Path, use_html: bool = True,
                       logger=None, project: str = "") -> None:
     """
     Generate thumbnail using HTML template and Playwright/Pillow.
     
     Args:
-        title: Main title text
-        subtitle: Subtitle text (optional)
-        brand_color: Brand color for styling
-        logo_path: Path to logo image (optional)
+        config: Project configuration with title, subtitle, brand info
+        styles: Styles configuration with colors, fonts, logo
         output_path: Path to output thumbnail (build/thumb.png)
-        styles: Additional styles configuration
+        use_html: Whether to prefer HTML rendering (Playwright) over Pillow
         logger: Logger instance
         project: Project name for logging
     """
     
-    styles = styles or {}
+    # Extract content from config and styles
+    title = config.get("title", "Video Title")
+    subtitle = config.get("subtitle", "")
+    brand_color = styles.get("brand_color", "#FF6B6B")
+    logo_path = _get_logo_path(styles, config)
     
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:
-        if PLAYWRIGHT_AVAILABLE:
-            _generate_thumbnail_playwright(title, subtitle, brand_color, logo_path, 
-                                         output_path, styles, logger, project)
+        if use_html and PLAYWRIGHT_AVAILABLE:
+            _generate_thumbnail_html(config, styles, output_path, logger, project)
         elif PILLOW_AVAILABLE:
-            _generate_thumbnail_pillow(title, subtitle, brand_color, logo_path,
-                                     output_path, styles, logger, project)
+            _generate_thumbnail_pillow(config, styles, output_path, logger, project)
         else:
             raise RenderError("Either Playwright or Pillow is required for thumbnail generation")
             
@@ -60,28 +59,31 @@ def generate_thumbnail(title: str, subtitle: Optional[str], brand_color: str,
         raise RenderError(f"Thumbnail generation failed: {e}")
 
 
-def _generate_thumbnail_playwright(title: str, subtitle: Optional[str], brand_color: str,
-                                 logo_path: Optional[str], output_path: Path,
-                                 styles: Dict[str, Any], logger=None, project: str = "") -> None:
+def _generate_thumbnail_html(config: Dict[str, Any], styles: Dict[str, Any],
+                           output_path: Path, logger=None, project: str = "") -> None:
     """
     Generate thumbnail using HTML template and Playwright.
     
     Args:
-        title: Main title text
-        subtitle: Subtitle text (optional)
-        brand_color: Brand color for styling
-        logo_path: Path to logo image (optional)
+        config: Project configuration with title, subtitle, brand info
+        styles: Styles configuration with colors, fonts, logo
         output_path: Path to output thumbnail
-        styles: Styles configuration
         logger: Logger instance
         project: Project name for logging
     """
     
+    # Extract content from config and styles
+    title = config.get("title", "Video Title")
+    subtitle = config.get("subtitle", "")
+    brand_color = styles.get("brand_color", "#FF6B6B")
+    logo_path = _get_logo_path(styles, config)
+    
     # Get template path
     template_path = Path(__file__).parent.parent / "templates" / "thumb.html"
     
+    # Create default template if it doesn't exist
     if not template_path.exists():
-        raise RenderError(f"Thumbnail template not found: {template_path}")
+        _create_default_thumb_template(template_path)
     
     try:
         # Load and render template
@@ -105,7 +107,7 @@ def _generate_thumbnail_playwright(title: str, subtitle: Optional[str], brand_co
         html_content = template.render(**context)
         
         # Convert to PNG using Playwright
-        _html_to_png_playwright(html_content, output_path, width=1280, height=720)
+        _html_to_png(html_content, output_path, width=1280, height=720)
         
         if logger:
             logger.info(f"Generated thumbnail using Playwright: {output_path}")
@@ -114,19 +116,15 @@ def _generate_thumbnail_playwright(title: str, subtitle: Optional[str], brand_co
         raise RenderError(f"Playwright thumbnail generation failed: {e}")
 
 
-def _generate_thumbnail_pillow(title: str, subtitle: Optional[str], brand_color: str,
-                              logo_path: Optional[str], output_path: Path,
-                              styles: Dict[str, Any], logger=None, project: str = "") -> None:
+def _generate_thumbnail_pillow(config: Dict[str, Any], styles: Dict[str, Any],
+                              output_path: Path, logger=None, project: str = "") -> None:
     """
     Generate thumbnail using Pillow as fallback.
     
     Args:
-        title: Main title text
-        subtitle: Subtitle text (optional)
-        brand_color: Brand color for styling
-        logo_path: Path to logo image (optional)
+        config: Project configuration with title, subtitle, brand info
+        styles: Styles configuration with colors, fonts, logo
         output_path: Path to output thumbnail
-        styles: Styles configuration
         logger: Logger instance
         project: Project name for logging
     """
@@ -135,6 +133,12 @@ def _generate_thumbnail_pillow(title: str, subtitle: Optional[str], brand_color:
         raise RenderError("Pillow is required for fallback thumbnail generation")
     
     try:
+        # Extract content from config and styles
+        title = config.get("title", "Video Title")
+        subtitle = config.get("subtitle", "")
+        brand_color = styles.get("brand_color", "#FF6B6B")
+        logo_path = _get_logo_path(styles, config)
+        
         # Create image with 1280x720 default size
         width, height = 1280, 720
         bg_color = styles.get("bg_color", "#10121A")
@@ -145,7 +149,8 @@ def _generate_thumbnail_pillow(title: str, subtitle: Optional[str], brand_color:
         text_rgb = _hex_to_rgb(text_color)
         brand_rgb = _hex_to_rgb(brand_color)
         
-        image = Image.new("RGB", (width, height), bg_rgb)
+        # Create gradient background
+        image = _create_gradient_background(width, height, bg_rgb, brand_rgb)
         draw = ImageDraw.Draw(image)
         
         # Try to load fonts
@@ -177,7 +182,7 @@ def _generate_thumbnail_pillow(title: str, subtitle: Optional[str], brand_color:
             
             draw.text((subtitle_x, subtitle_y), subtitle, fill=brand_rgb, font=subtitle_font)
         
-        # Add logo if provided
+        # Add logo if provided (top-right positioning)
         if logo_path and Path(logo_path).exists():
             _add_logo_to_image(image, logo_path, styles)
         
@@ -191,7 +196,151 @@ def _generate_thumbnail_pillow(title: str, subtitle: Optional[str], brand_color:
         raise RenderError(f"Pillow thumbnail generation failed: {e}")
 
 
-def _html_to_png_playwright(html_content: str, output_path: Path, 
+def _get_logo_path(styles: Dict[str, Any], config: Dict[str, Any]) -> Optional[str]:
+    """Get logo path from styles or config."""
+    # Check watermark config first
+    watermark_config = config.get("watermark", {})
+    if watermark_config.get("enabled", False):
+        return watermark_config.get("path")
+    
+    # Check styles
+    return styles.get("logo_path")
+
+
+def _create_gradient_background(width: int, height: int, bg_rgb: tuple, brand_rgb: tuple):
+    """Create a gradient background using Pillow."""
+    if not PILLOW_AVAILABLE:
+        raise RenderError("Pillow is required for gradient background creation")
+    
+    image = Image.new("RGB", (width, height), bg_rgb)
+    draw = ImageDraw.Draw(image)
+    
+    # Create a subtle gradient effect
+    for y in range(height):
+        # Interpolate between background and brand color
+        ratio = y / height
+        r = int(bg_rgb[0] + (brand_rgb[0] - bg_rgb[0]) * ratio * 0.1)
+        g = int(bg_rgb[1] + (brand_rgb[1] - bg_rgb[1]) * ratio * 0.1)
+        b = int(bg_rgb[2] + (brand_rgb[2] - bg_rgb[2]) * ratio * 0.1)
+        
+        # Clamp values
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    
+    return image
+
+
+def _create_default_thumb_template(template_path: Path) -> None:
+    """Create a default thumbnail HTML template."""
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    default_template = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Thumbnail</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 1280px;
+            height: 720px;
+            background: {{ bg_color }};
+            font-family: {{ font_family }};
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            padding: 40px;
+        }
+        
+        .title {
+            font-size: 72px;
+            font-weight: 700;
+            color: {{ text_color }};
+            text-align: center;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            line-height: 1.2;
+        }
+        
+        .subtitle {
+            font-size: 36px;
+            font-weight: 400;
+            color: {{ brand_color }};
+            text-align: center;
+            opacity: 0.9;
+        }
+        
+        .logo {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            width: {{ logo_width }}px;
+            opacity: {{ logo_opacity }};
+        }
+        
+        .accent-line {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 4px;
+            background: {{ brand_color }};
+            border-radius: 2px;
+        }
+        
+        .gradient-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, transparent 0%, rgba(0, 0, 0, 0.1) 100%);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="gradient-overlay"></div>
+        
+        {% if logo_path %}
+        <img src="file://{{ logo_path }}" alt="Logo" class="logo">
+        {% endif %}
+        
+        <h1 class="title">{{ title }}</h1>
+        {% if subtitle %}
+        <p class="subtitle">{{ subtitle }}</p>
+        {% endif %}
+        
+        <div class="accent-line"></div>
+    </div>
+</body>
+</html>"""
+    
+    with open(template_path, 'w', encoding='utf-8') as f:
+        f.write(default_template)
+
+
+def _html_to_png(html_content: str, output_path: Path, 
                            width: int = 1280, height: int = 720) -> None:
     """
     Convert HTML to PNG using Playwright.

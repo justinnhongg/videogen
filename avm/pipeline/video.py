@@ -45,6 +45,10 @@ def ken_burns(image_path: Path, duration: float, zoom_from: float = 1.05, zoom_t
         # Resize to ensure it's at least 1920x1080, maintaining aspect ratio
         clip = clip.resize(height=1080)
         
+        # Ensure minimum width of 1920
+        if clip.w < 1920:
+            clip = clip.resize(width=1920)
+        
         # Calculate pan offsets based on direction
         pan_x_start, pan_x_end, pan_y_start, pan_y_end = _calculate_pan_offsets(pan, zoom_from, zoom_to)
         
@@ -53,8 +57,8 @@ def ken_burns(image_path: Path, duration: float, zoom_from: float = 1.05, zoom_t
             # Calculate progress (0 to 1)
             progress = t / duration
             
-            # Apply smooth easeInOut easing
-            eased_progress = _ease_in_out_cubic(progress)
+            # Apply smooth easeInOut cosine easing
+            eased_progress = _ease_in_out_cosine(progress)
             
             # Calculate current zoom and pan
             current_zoom = zoom_from + (zoom_to - zoom_from) * eased_progress
@@ -72,9 +76,9 @@ def ken_burns(image_path: Path, duration: float, zoom_from: float = 1.05, zoom_t
                 frame = cv2.resize(frame, (new_w, new_h))
                 
                 # Crop to 1920x1080 with pan offset
-                if new_h > h or new_w > w:
-                    # Calculate crop area with pan
-                    crop_h, crop_w = min(h, new_h), min(w, new_w)
+                if new_h > 1080 or new_w > 1920:
+                    # Calculate crop area with pan offset
+                    crop_h, crop_w = 1080, 1920
                     
                     # Center crop with pan offset
                     start_y = max(0, int((new_h - crop_h) / 2 + current_pan_y * crop_h))
@@ -89,6 +93,10 @@ def ken_burns(image_path: Path, duration: float, zoom_from: float = 1.05, zoom_t
                     end_x = start_x + crop_w
                     
                     frame = frame[start_y:end_y, start_x:end_x]
+                
+                # Ensure final frame is exactly 1920x1080
+                if frame.shape[:2] != (1080, 1920):
+                    frame = cv2.resize(frame, (1920, 1080))
             
             return frame
         
@@ -128,9 +136,9 @@ def _calculate_pan_offsets(pan: str, zoom_from: float, zoom_to: float) -> Tuple[
         return (max_pan_offset, -max_pan_offset, 0.0, 0.0)
 
 
-def _ease_in_out_cubic(progress: float) -> float:
+def _ease_in_out_cosine(progress: float) -> float:
     """
-    Cubic ease-in-out function for smooth motion.
+    Cosine ease-in-out function for smooth motion.
     
     Args:
         progress: Progress from 0.0 to 1.0
@@ -138,11 +146,7 @@ def _ease_in_out_cubic(progress: float) -> float:
     Returns:
         Eased progress from 0.0 to 1.0
     """
-    if progress < 0.5:
-        return 4 * progress * progress * progress
-    else:
-        p = 2 * progress - 2
-        return 1 + p * p * p / 2
+    return 0.5 * (1 - math.cos(math.pi * progress))
 
 
 def compose_video(slide_images: List[Path], timeline: Dict[str, Any],

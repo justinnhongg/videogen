@@ -61,7 +61,12 @@ def doctor(logger=None, project: str = "") -> Dict[str, Dict[str, str]]:
     }
     
     # Playwright Chromium check
-    is_ok, version, error = check_playwright_chromium()
+    try:
+        from .slides import check_playwright_installation
+        is_ok, version, error = check_playwright_installation()
+    except ImportError:
+        is_ok, version, error = False, "Not available", "slides module not available"
+    
     results["playwright"] = {
         "status": "✅ OK" if is_ok else "❌ FAIL",
         "version": version,
@@ -196,30 +201,6 @@ def check_whisper() -> Tuple[bool, str, str]:
     return False, "", "Neither faster-whisper nor openai-whisper is installed"
 
 
-def check_playwright_chromium() -> Tuple[bool, str, str]:
-    """
-    Check if Playwright is installed and Chromium browser is available.
-    
-    Returns:
-        (is_available, version, error_message)
-    """
-    try:
-        # Check if playwright module is available
-        import playwright
-        version = getattr(playwright, '__version__', 'unknown')
-        
-        # Check if Chromium is installed by trying to launch it
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                browser.close()
-            return True, f"playwright {version} with Chromium", ""
-        except Exception as e:
-            return False, f"playwright {version}", f"Chromium not installed: {e}"
-            
-    except ImportError:
-        return False, "", "Playwright not installed"
 
 
 def check_fonts() -> Tuple[bool, str, str]:
@@ -419,7 +400,11 @@ def get_installation_commands() -> Dict[str, List[str]]:
 # Legacy functions for backward compatibility
 def check_playwright() -> Tuple[bool, str, str]:
     """Legacy function for backward compatibility."""
-    return check_playwright_chromium()
+    try:
+        from .slides import check_playwright_installation
+        return check_playwright_installation()
+    except ImportError:
+        return False, "Not available", "slides module not available"
 
 
 def check_moviepy() -> Tuple[bool, str, str]:
