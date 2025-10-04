@@ -1,0 +1,27 @@
+{
+  "created_at": "2025-10-03T20:17:28.080498",
+  "version": "1.0.0",
+  "steps": {
+    "test": {
+      "completed_at": "2025-10-03T20:17:28.080636",
+      "input_files": [
+        "/Users/justin/video generator/projects/demo/build/test_input.txt"
+      ],
+      "output_files": [
+        "/Users/justin/video generator/projects/demo/build/captions.srt"
+      ],
+      "input_hashes": {
+        "/Users/justin/video generator/projects/demo/build/test_input.txt": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+      },
+      "output_hashes": {},
+      "input_mtimes": {
+        "/Users/justin/video generator/projects/demo/build/test_input.txt": 1759537048.0805764
+      },
+      "output_mtimes": {},
+      "duration_ms": 500.0,
+      "config_hash": "",
+      "status": "completed"
+    }
+  },
+  "updated_at": "2025-10-03T20:17:28.080644"
+}

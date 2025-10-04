@@ -1,0 +1,15 @@
+1
+00:00:00,000 --> 00:00:05,000
+Hello everyone and welcome to this demo video about AVM
+
+2
+00:00:05,000 --> 00:00:10,000
+the Audio to Video Maker. Today we will learn about
+
+3
+00:00:10,000 --> 00:00:15,000
+creating professional videos from audio recordings.
+
+4
+00:00:15,000 --> 00:00:18,000
+This process involves transcription and video assembly.

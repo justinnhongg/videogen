@@ -12,7 +12,30 @@ Convert narrated lessons into polished YouTube videos with captions, watermarks,
 - **Branding**: Watermarks, intro/outro videos
 - **Thumbnails**: Auto-generated YouTube thumbnails
 
-## Quick Start
+## Quick Start (5 Commands)
+
+Get up and running in minutes:
+
+```bash
+# 1. Install dependencies
+make install
+
+# 2. Setup Playwright browser
+make setup
+
+# 3. Check system health
+make doctor
+
+# 4. Run tests
+make test
+
+# 5. Generate demo video
+make demo
+```
+
+That's it! Your demo video will be generated in `avm/projects/demo/build/`.
+
+## Detailed Setup
 
 ### 1. Install Dependencies
 
@@ -178,6 +201,13 @@ Options:
   --use-pillow        Use Pillow instead of HTML
 ```
 
+#### Doctor
+```bash
+python avm.py doctor
+
+# Check system health and dependencies
+```
+
 ## Examples
 
 ### Basic Usage
@@ -204,6 +234,18 @@ python avm.py render -p my-lesson --crf 20 --preset slow --music bg-music.mp3
 python avm.py thumb -p my-lesson --title "Advanced Physics" --subtitle "Quantum Mechanics"
 ```
 
+## Makefile Commands
+
+```bash
+make install     # Install Python dependencies
+make setup       # Complete setup (install + playwright)
+make test        # Run all tests
+make demo        # Run demo pipeline end-to-end
+make doctor      # Check system health
+make clean       # Clean build artifacts
+make help        # Show all available commands
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -216,7 +258,7 @@ python avm.py thumb -p my-lesson --title "Advanced Physics" --subtitle "Quantum 
 
 2. **Playwright browser missing**
    ```bash
-   python -m playwright install chromium
+   make setup  # or: python -m playwright install chromium
    ```
 
 3. **Whisper model download**
@@ -248,7 +290,14 @@ make clean
 
 ### Check System Requirements
 ```bash
-make check
+make doctor
+```
+
+### Development Setup
+```bash
+make dev-setup  # Install dev dependencies
+make lint       # Run code linting
+make format     # Format code
 ```
 
 ## License
