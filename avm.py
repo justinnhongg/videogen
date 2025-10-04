@@ -242,7 +242,8 @@ def cmd_render(args) -> None:
             fps=fps,
             zoom=zoom,
             logger=logger,
-            project=args.project
+            project=args.project,
+            project_path=paths.project_dir
         )
     
     with Timer(logger, "export", args.project, "Exporting final video") as timer:

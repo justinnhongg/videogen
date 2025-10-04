@@ -25,7 +25,7 @@ def compose_visual_track(slide_pngs: List[Path], timeline: Dict[str, Any],
                         watermark_cfg: Dict[str, Any], intro_path: Optional[Path] = None,
                         outro_path: Optional[Path] = None, fps: int = 30,
                         config: Optional[Dict[str, Any]] = None,
-                        logger=None, project: str = "") -> Path:
+                        logger=None, project: str = "", project_path: Optional[Path] = None) -> Path:
     """
     Build ImageClips with Ken-Burns per timeline segment.
     
@@ -50,7 +50,11 @@ def compose_visual_track(slide_pngs: List[Path], timeline: Dict[str, Any],
         raise RenderError("No slide images provided")
     
     config = config or {}
-    temp_dir = Path("build/temp")
+    # Use the project's build directory for temp files
+    if project_path:
+        temp_dir = project_path / "build" / "temp"
+    else:
+        temp_dir = Path("build/temp")
     temp_dir.mkdir(parents=True, exist_ok=True)
     
     video_nocap_path = temp_dir / "video_nocap.mp4"
@@ -324,7 +328,7 @@ def assemble_video_from_timeline(timeline_path: Path, slides_dir: Path,
                                 outro_path: Optional[Path] = None,
                                 output_path: Optional[Path] = None,
                                 config: Optional[Dict[str, Any]] = None,
-                                logger=None, project: str = "") -> Path:
+                                logger=None, project: str = "", project_path: Optional[Path] = None) -> Path:
     """
     Assemble video from timeline and slide images.
     
@@ -352,7 +356,10 @@ def assemble_video_from_timeline(timeline_path: Path, slides_dir: Path,
     
     # Set default output path
     if output_path is None:
-        temp_dir = Path("build/temp")
+        if project_path:
+            temp_dir = project_path / "build" / "temp"
+        else:
+            temp_dir = Path("build/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
         output_path = temp_dir / "video_nocap.mp4"
     
@@ -364,7 +371,7 @@ def assemble_video_from_timeline(timeline_path: Path, slides_dir: Path,
     return compose_visual_track(
         slide_pngs, timeline, watermark_cfg,
         intro_path, outro_path, fps, config,
-        logger, project
+        logger, project, project_path
     )
 
 
@@ -419,7 +426,7 @@ def assemble_video(slide_images: List[Path], durations: List[float],
                   outro_path: Optional[Path] = None,
                   output_path: Path = None,
                   fps: int = 30, zoom: float = 1.10,
-                  logger=None, project: str = ""):
+                  logger=None, project: str = "", project_path: Optional[Path] = None):
     """
     Legacy assemble video function for backward compatibility.
     
@@ -476,7 +483,7 @@ def assemble_video(slide_images: List[Path], durations: List[float],
         return compose_visual_track(
             slide_images, timeline, watermark_cfg,
             intro_path, outro_path, fps, {},
-            logger, project
+            logger, project, project_path
         )
 
 
