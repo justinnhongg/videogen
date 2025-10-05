@@ -108,8 +108,11 @@ def compare_image_golden(image_path: Path, golden_path: Path,
         return False
 
 
-def _calculate_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
+def _calculate_ssim(img1, img2) -> float:
     """Calculate Structural Similarity Index."""
+    
+    if not OPENCV_AVAILABLE:
+        return 0.0
     
     # Constants
     C1 = 0.01 ** 2
