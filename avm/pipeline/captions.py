@@ -190,7 +190,8 @@ def position_captions_above_safe_bottom(captions: List[Dict[str, Any]],
 
 
 def burn_captions(video_in: Path, srt: Path, video_out: Path, 
-                 font: str, size: int, outline: int, safe_bottom_pct: int) -> None:
+                 font: str, size: int, outline: int, safe_bottom_pct: int, 
+                 styles: Optional[Dict[str, Any]] = None) -> None:
     """
     Burn captions into video using ffmpeg subtitles filter with force_style.
     
@@ -198,10 +199,11 @@ def burn_captions(video_in: Path, srt: Path, video_out: Path,
         video_in: Input video file
         srt: SRT file with captions
         video_out: Output video file
-        font: Font name
+        font: Font name (fallback if not in styles)
         size: Font size in pixels
         outline: Outline width in pixels
         safe_bottom_pct: Safe bottom percentage (e.g., 12% of 1080)
+        styles: Styles configuration for watermark collision detection
     """
     
     if not video_in.exists():
@@ -213,14 +215,24 @@ def burn_captions(video_in: Path, srt: Path, video_out: Path,
     # Calculate MarginV from safe_bottom_pct of 1080
     margin_v = int(1080 * safe_bottom_pct / 100)
     
-    # Increase MarginV by 5% if watermark uses bottom corner
-    # This is a placeholder - in practice, you'd check watermark config
-    # margin_v = int(margin_v * 1.05)  # Uncomment if watermark collision detected
+    # Increase MarginV by ~5% if watermark uses bottom corner
+    if styles:
+        watermark_config = styles.get("watermark", {})
+        if watermark_config.get("enabled", False):
+            watermark_position = watermark_config.get("position", "bottom-right")
+            if watermark_position in ["bottom-right", "bottom-left"]:
+                margin_v = int(margin_v * 1.05)
+    
+    # Get font from styles if available, otherwise use fallback
+    caption_font = font
+    if styles:
+        caption_config = styles.get("caption", {})
+        caption_font = caption_config.get("font", font)
     
     # Create subtitle filter with force_style
     filter_str = (
         f"subtitles={srt}:"
-        f"force_style='FontName={font},FontSize={size},"
+        f"force_style='FontName={caption_font},FontSize={size},"
         f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
         f"Outline={outline},BorderStyle=1,"
         f"Alignment=2,MarginV={margin_v}'"

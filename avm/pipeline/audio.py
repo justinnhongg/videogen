@@ -287,7 +287,8 @@ def measure_lufs(audio_path: Path, logger=None, project: str = "") -> Dict[str, 
         }
         
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"LUFS measurement failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"LUFS measurement failed: {stderr_output}")
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         raise RenderError(f"Invalid LUFS measurement data: {e}")
     except Exception as e:
@@ -325,7 +326,8 @@ def mix_voice_and_music(voice_wav: Path, music_wav: Path, output_wav: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Audio mixing failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Audio mixing failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Audio mixing error: {e}")
 
@@ -351,7 +353,8 @@ def apply_final_limiter(audio_path: Path, output_path: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Final limiting failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Final limiting failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Final limiting error: {e}")
 
@@ -385,7 +388,8 @@ def resample_audio(input_path: Path, output_path: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Audio resampling failed: {e.stderr}")
+        stderr_output = e.stderr if e.stderr else "No stderr captured"
+        raise RenderError(f"Audio resampling failed: {stderr_output}")
     except Exception as e:
         raise RenderError(f"Audio resampling error: {e}")
 

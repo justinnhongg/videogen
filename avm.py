@@ -118,14 +118,22 @@ def check_dependencies(args) -> None:
         
         return
     
-    # For all other commands, check all dependencies
-    # Check Whisper
+    # For all other commands, check dependencies based on command
+    # Check Whisper for transcribe and all commands
     if not check_whisper_availability():
         missing_deps.append("Whisper (faster-whisper or openai-whisper)")
     
-    # Check Playwright
-    if not check_playwright_installation():
-        missing_deps.append("Playwright with Chromium browser")
+    # Check Playwright only for slides and thumb commands
+    if args.command in ["slides", "thumb"]:
+        if not check_playwright_installation():
+            missing_deps.append("Playwright with Chromium browser")
+    
+    # FFmpeg is always required (except for doctor and storyboard)
+    try:
+        import subprocess
+        subprocess.run(["ffmpeg", "-version"], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        missing_deps.append("FFmpeg")
     
     if missing_deps:
         print("❌ Missing required dependencies:")
@@ -314,20 +322,18 @@ def cmd_render(args) -> None:
         )
     
     with Timer(logger, "export", args.project, "Exporting final video") as timer:
-        # Get music path
-        music_path = Path(args.music) if args.music else None
+        # Get music path from CLI args and add to config
+        if args.music:
+            config["music"] = str(Path(args.music))
         
-        # Export complete video using legacy signature
+        # Get burn_subs setting
         burn_subs = get_config_value(config, 'burn_captions', args.burn_subs)
         
+        # Export complete video using new signature
         export_complete_video(
-            paths.video_nocap_mp4,
-            paths.audio_wav,
-            music_path,
-            paths.captions_srt if paths.captions_srt.exists() else None,
-            paths.final_mp4,
-            config,
-            burn_subs=burn_subs,
+            config=config,
+            paths=paths,
+            burn_captions=burn_subs,
             logger=logger,
             project=args.project
         )
@@ -763,7 +769,7 @@ def main() -> int:
     
     try:
         # Check dependencies for most commands
-        if args.command not in ["doctor", "storyboard", "slides"]:
+        if args.command not in ["doctor", "storyboard"]:
             check_dependencies(args)
         
         # Route to appropriate command

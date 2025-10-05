@@ -316,6 +316,39 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
         raise RenderError("ffprobe not found. Please install FFmpeg.")
 
 
+def video_has_expected_codecs(video_path: Path) -> bool:
+    """
+    Check if video has expected codecs (h264 + aac).
+    
+    Args:
+        video_path: Path to video file
+    
+    Returns:
+        True if video has h264 video and aac audio codecs
+    """
+    
+    try:
+        info = get_video_info(video_path)
+        
+        # Check for video and audio streams with expected codecs
+        has_h264_video = False
+        has_aac_audio = False
+        
+        for stream in info.get("streams", []):
+            codec_name = stream.get("codec_name", "").lower()
+            codec_type = stream.get("codec_type", "")
+            
+            if codec_type == "video" and codec_name == "h264":
+                has_h264_video = True
+            elif codec_type == "audio" and codec_name in ["aac", "mp4a"]:
+                has_aac_audio = True
+        
+        return has_h264_video and has_aac_audio
+        
+    except Exception:
+        return False
+
+
 def validate_output(video_path: Path) -> bool:
     """
     Validate that output video is properly formatted.
