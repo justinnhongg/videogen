@@ -77,6 +77,11 @@ class ProjectPaths:
         return self.build_dir / "video_nocap.mp4"
     
     @property
+    def video_audio_mp4(self) -> Path:
+        """Path to video with audio (no captions)."""
+        return self.build_dir / "video_audio.mp4"
+    
+    @property
     def voice_norm_wav(self) -> Path:
         """Path to normalized voice audio."""
         return self.build_dir / "voice_norm.wav"

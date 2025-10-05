@@ -73,6 +73,52 @@ def check_dependencies(args) -> None:
     """Check that all required dependencies are available."""
     missing_deps = []
     
+    # Special handling for render command
+    if args.command == "render":
+        # For render command, check captions and burn_subs status
+        root_path = Path(args.root) / "avm" if (Path(args.root) / "avm").exists() else Path(args.root)
+        paths = ProjectPaths(root_path, args.project)
+        captions_exist = paths.captions_srt.exists()
+        burn_subs = getattr(args, 'burn_subs', False)
+        
+        # Check if we need Whisper (for captions)
+        # Need Whisper only if:
+        # 1. No captions exist AND
+        # 2. We're burning captions (burn_subs=True)
+        need_whisper = not captions_exist and burn_subs
+        
+        if need_whisper and not check_whisper_availability():
+            missing_deps.append("Whisper (faster-whisper or openai-whisper)")
+            print("❌ Missing required dependencies for render:")
+            for dep in missing_deps:
+                print(f"  - {dep}")
+            print("\n💡 Tip: Run 'avm transcribe -p <project>' to generate captions first.")
+            print("   Or use '--no-burn-subs' for soft subtitles (no Whisper needed).")
+            sys.exit(11)
+        
+        # FFmpeg is always required for render (video processing)
+        try:
+            import subprocess
+            subprocess.run(["ffmpeg", "-version"], check=True, capture_output=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            missing_deps.append("FFmpeg")
+        
+        # Playwright is NOT required for render (video assembly is already done)
+        
+        if missing_deps:
+            print("❌ Missing required dependencies for render:")
+            for dep in missing_deps:
+                print(f"  - {dep}")
+            print("\nRun 'avm.py doctor' for detailed system check and installation instructions.")
+            sys.exit(11)
+        
+        # Log friendly note when captions are missing and burn_subs=True
+        if not captions_exist and burn_subs:
+            print("💡 Note: No captions found. Run 'avm transcribe -p <project>' to generate captions first.")
+        
+        return
+    
+    # For all other commands, check all dependencies
     # Check Whisper
     if not check_whisper_availability():
         missing_deps.append("Whisper (faster-whisper or openai-whisper)")
@@ -271,7 +317,7 @@ def cmd_render(args) -> None:
         # Get music path
         music_path = Path(args.music) if args.music else None
         
-        # Export complete video
+        # Export complete video using legacy signature
         burn_subs = get_config_value(config, 'burn_captions', args.burn_subs)
         
         export_complete_video(

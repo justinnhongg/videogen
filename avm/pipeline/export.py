@@ -32,53 +32,46 @@ def export_complete_video(config: Dict[str, Any], paths: ProjectPaths,
     if not paths.video_nocap_mp4.exists():
         raise RenderError(f"Video file not found: {paths.video_nocap_mp4}")
     
-    if not paths.voice_norm_wav.exists():
-        raise RenderError(f"Voice audio file not found: {paths.voice_norm_wav}")
+    if not paths.audio_wav.exists():
+        raise RenderError(f"Audio file not found: {paths.audio_wav}")
     
     try:
         with Timer(logger, "export_complete", project, "Exporting complete video"):
-            # Get export configuration
-            export_config = config.get("export", {})
-            crf = export_config.get("crf", 18)
-            preset = export_config.get("preset", "medium")
+            # Get music path from config (project config key "music") and CLI override
+            music_path = None
+            if "music" in config:
+                music_path = Path(config["music"]) if config["music"] else None
             
-            # Get styles configuration for captions
-            styles = config.get("styles", {})
-            caption_config = styles.get("caption", {})
-            font_size = caption_config.get("font_size", 40)
-            stroke_px = caption_config.get("stroke_px", 3)
-            safe_bottom_pct = caption_config.get("safe_bottom_pct", 12)
+            # Step 1: Process audio (normalize voice, duck music)
+            from .audio import process_audio
+            process_audio(
+                paths.audio_wav, music_path, 
+                paths.voice_norm_wav, paths.music_ducked_wav, 
+                config, logger, project
+            )
             
-            # Handle captions
-            if paths.captions_srt.exists():
-                if burn_captions:
-                    # Burn captions into video
-                    burn_captions(
-                        paths.video_nocap_mp4, paths.captions_srt, paths.final_mp4,
-                        font="Arial", size=font_size, outline=stroke_px,
-                        safe_bottom_pct=safe_bottom_pct
-                    )
-                else:
-                    # Attach soft subs (mov_text) or keep sidecar
-                    attach_soft_subs(paths.video_nocap_mp4, paths.captions_srt, paths.final_mp4)
-            else:
-                # No captions - just copy video
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", str(paths.video_nocap_mp4),
-                    "-c", "copy",
-                    str(paths.final_mp4)
-                ]
-                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            # Step 2: Mux audio with video
+            from .mux import mux_audio_video
+            mux_audio_video(
+                paths.video_nocap_mp4, paths.voice_norm_wav,
+                paths.music_ducked_wav if paths.music_ducked_wav.exists() else None,
+                paths.video_audio_mp4, config, logger, project
+            )
             
-            # Apply professional encoding settings
-            _apply_professional_encoding(paths.final_mp4, crf, preset)
+            # Step 3: Final export with captions and professional encoding
+            final_export(
+                in_video=paths.video_audio_mp4,
+                srt=paths.captions_srt if paths.captions_srt.exists() else None,
+                out_final_mp4=paths.final_mp4,
+                burn=burn_captions,
+                config=config, logger=logger, project=project
+            )
             
             # Get final video duration
             duration = _get_video_duration(paths.final_mp4)
             
             if logger:
-                logger.info(f"Complete video export finished: {paths.final_mp4}")
+                logger.info(f"Export complete video finished: {paths.final_mp4}")
                 logger.info(f"Video duration: {duration:.2f} seconds")
             
             return duration
@@ -430,28 +423,3 @@ def mix_audio_tracks(voice_path: Path, music_path: Path, output_path: Path,
     except FileNotFoundError:
         raise RenderError("FFmpeg not found. Please install FFmpeg.")
 
-
-def export_complete_video(video_path: Path, voice_path: Path, music_path: Optional[Path],
-                         srt_path: Optional[Path], output_path: Path,
-                         config: Dict[str, Any], burn_subs: bool = False,
-                         logger=None, project: str = "") -> Path:
-    """
-    Legacy function for backward compatibility.
-    
-    Args:
-        video_path: Path to assembled video (no audio)
-        voice_path: Path to voice audio
-        music_path: Path to background music (optional)
-        srt_path: Path to SRT subtitles (optional)
-        output_path: Path to final output video
-        config: Configuration dictionary
-        burn_subs: Whether to burn subtitles
-        logger: Logger instance
-        project: Project name for logging
-    
-    Returns:
-        Path to final video
-    """
-    # This would need to be implemented as a wrapper around the new functions
-    # For now, just return the output path
-    return output_path

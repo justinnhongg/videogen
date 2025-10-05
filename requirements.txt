@@ -3,7 +3,6 @@
 
 # Audio processing and transcription
 faster-whisper>=0.10,<0.12
-# Alternative: openai-whisper>=20231117
 pydub>=0.25,<1.0
 
 # Video processing
@@ -21,9 +20,6 @@ jinja2>=3.1,<4.0
 # Configuration
 PyYAML>=6.0,<7.0
 
-# Data validation
-pydantic>=2.7,<3.0
-
 # Subtitle processing
 srt>=3.5,<4.0
 
@@ -33,14 +29,8 @@ Pillow>=10.2,<12.0
 # Numerical computing
 numpy>=1.26,<2.0
 
-# Logging
-structlog>=24.1,<25.0
-
 # CLI framework
 typer>=0.12,<0.13
 
-# Optional GPU acceleration
-# onnxruntime-gpu>=1.18,<1.20
-
-# Optional dependencies for better performance
-# llvmlite  # if needed by whisper variants
+# Optional rich output
+rich>=13.7,<14.0
