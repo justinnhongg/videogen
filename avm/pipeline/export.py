@@ -3,7 +3,6 @@ Final export with audio processing and SRT handling.
 """
 
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -11,6 +10,7 @@ from .errors import MuxError, RenderError
 from .logging import Timer
 from .captions import burn_captions, attach_soft_subs
 from .io_paths import ProjectPaths
+from .mux import mux_audio_video, probe_video_duration, video_has_expected_codecs
 
 
 def export_complete_video(config: Dict[str, Any], paths: ProjectPaths, 
@@ -51,12 +51,28 @@ def export_complete_video(config: Dict[str, Any], paths: ProjectPaths,
             )
             
             # Step 2: Mux audio with video
-            from .mux import mux_audio_video
             mux_audio_video(
                 paths.video_nocap_mp4, paths.voice_norm_wav,
                 paths.music_ducked_wav if paths.music_ducked_wav.exists() else None,
                 paths.video_audio_mp4, config, logger, project
             )
+
+            if logger:
+                logger.info("Validating muxed video duration and codecs")
+            try:
+                mux_duration = probe_video_duration(paths.video_audio_mp4)
+            except MuxError as exc:
+                raise RenderError(str(exc)) from exc
+
+            if mux_duration <= 1.0:
+                raise RenderError("Muxed video is too short (< 1s); check timeline and inputs")
+
+            if logger:
+                logger.info(f"Muxed video duration: {mux_duration:.2f} seconds")
+                if video_has_expected_codecs(paths.video_audio_mp4):
+                    logger.info("✅ Codec check passed for video_audio.mp4")
+                else:
+                    logger.warning("Codec mismatch detected for video_audio.mp4")
             
             # Step 3: Final export with captions and professional encoding
             final_export(
@@ -77,8 +93,8 @@ def export_complete_video(config: Dict[str, Any], paths: ProjectPaths,
             return duration
             
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Video export failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Video export failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Export error: {e}")
 
@@ -106,77 +122,68 @@ def final_export(in_video: Path, srt: Optional[Path], out_final_mp4: Path,
         raise RenderError(f"Input video file not found: {in_video}")
     
     config = config or {}
-    
+    temp_outputs = []
+
     try:
         with Timer(logger, "final_export", project, "Final video export"):
-            # Get export configuration
             export_config = config.get("export", {})
             crf = export_config.get("crf", 18)
             preset = export_config.get("preset", "medium")
-            
-            # Get styles configuration for captions
+
             styles = config.get("styles", {})
             caption_config = styles.get("caption", {})
             font_size = caption_config.get("font_size", 40)
             stroke_px = caption_config.get("stroke_px", 3)
             safe_bottom_pct = caption_config.get("safe_bottom_pct", 12)
-            
-            # Handle subtitles
+            watermark_corner = None
+            watermark_cfg = styles.get("watermark", {}) if styles else {}
+            if watermark_cfg.get("enabled", False):
+                watermark_corner = watermark_cfg.get("position", "bottom-right")
+
+            working_video = in_video
+
             if srt and srt.exists():
                 if burn:
-                    # Burn captions using captions.py burn_captions
+                    temp_burned = out_final_mp4.with_suffix('.burn_temp.mp4')
                     burn_captions(
-                        in_video, srt, out_final_mp4,
-                        font="Arial", size=font_size, outline=stroke_px,
-                        safe_bottom_pct=safe_bottom_pct, styles=styles
+                        in_video,
+                        srt,
+                        temp_burned,
+                        font=caption_config.get("font", "Arial"),
+                        size=font_size,
+                        outline=stroke_px,
+                        safe_bottom_pct=safe_bottom_pct,
+                        watermark_corner=watermark_corner
                     )
+                    working_video = temp_burned
+                    temp_outputs.append(temp_burned)
                 else:
-                    # Attach soft subs (mov_text) or leave sidecar if not available
-                    try:
-                        attach_soft_subs(in_video, srt, out_final_mp4)
-                    except Exception as e:
-                        # If mov_text fails, copy video and keep SRT as sidecar
-                        if logger:
-                            logger.warning(f"Failed to embed subtitles, keeping as sidecar: {e}")
-                        
-                        # Copy video without subtitles
-                        cmd = [
-                            "ffmpeg", "-y",
-                            "-i", str(in_video),
-                            "-c", "copy",
-                            str(out_final_mp4)
-                        ]
-                        subprocess.run(cmd, check=True, capture_output=True, text=True)
-                        
-                        # Copy SRT as sidecar
-                        sidecar_srt = out_final_mp4.with_suffix('.srt')
-                        import shutil
-                        shutil.copy2(srt, sidecar_srt)
-                        
-                        if logger:
-                            logger.info(f"Created sidecar SRT file: {sidecar_srt}")
-            else:
-                # No subtitles - just copy/encode video
-                _encode_final_video(in_video, out_final_mp4, crf, preset, config)
-            
-            # Apply professional encoding settings to final output
-            _apply_professional_encoding(out_final_mp4, crf, preset)
-            
-            # Get final video duration
+                    temp_subs = out_final_mp4.with_suffix('.subs_temp.mp4')
+                    attach_soft_subs(in_video, srt, temp_subs)
+                    working_video = temp_subs
+                    temp_outputs.append(temp_subs)
+
+            _encode_final_video(working_video, out_final_mp4, crf, preset)
+
             duration = _get_video_duration(out_final_mp4)
-            
+
             if logger:
                 logger.info(f"Final export completed: {out_final_mp4}")
                 logger.info(f"Video duration: {duration:.2f} seconds")
-            
+
             return duration
-            
+
     except Exception as e:
         raise RenderError(f"Final export failed: {e}")
+    finally:
+        for temp_path in temp_outputs:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
-def _encode_final_video(in_video: Path, out_video: Path, crf: int, preset: str,
-                       config: Dict[str, Any]) -> None:
+def _encode_final_video(in_video: Path, out_video: Path, crf: int, preset: str) -> None:
     """
     Encode final video with professional settings.
     
@@ -185,7 +192,6 @@ def _encode_final_video(in_video: Path, out_video: Path, crf: int, preset: str,
         out_video: Output video file
         crf: Constant Rate Factor
         preset: Encoding preset
-        config: Configuration dictionary
     """
     
     cmd = [
@@ -201,60 +207,18 @@ def _encode_final_video(in_video: Path, out_video: Path, crf: int, preset: str,
         "-color_trc", "bt709",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-ar", "48000",
+        "-ac", "2",
         str(out_video)
     ]
     
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Video encoding failed: {e.stderr}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Video encoding failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Video encoding error: {e}")
-
-
-def _apply_professional_encoding(video_path: Path, crf: int, preset: str) -> None:
-    """
-    Apply professional encoding settings to video.
-    
-    Args:
-        video_path: Video file to encode
-        crf: Constant Rate Factor
-        preset: Encoding preset
-    """
-    
-    # Create temporary file for re-encoding
-    temp_video = video_path.with_suffix('.temp.mp4')
-    
-    try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_path),
-            "-c:v", "libx264",
-            "-crf", str(crf),
-            "-preset", preset,
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            "-colorspace", "bt709",
-            "-color_primaries", "bt709",
-            "-color_trc", "bt709",
-            "-c:a", "copy",  # Copy audio without re-encoding
-            str(temp_video)
-        ]
-        
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        
-        # Replace original with encoded version
-        temp_video.replace(video_path)
-        
-    except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Professional encoding failed: {stderr_output}")
-    except Exception as e:
-        raise RenderError(f"Professional encoding error: {e}")
-    finally:
-        # Clean up temp file if it exists
-        if temp_video.exists():
-            temp_video.unlink(missing_ok=True)
 
 
 def _get_video_duration(video_path: Path) -> float:
@@ -280,7 +244,8 @@ def _get_video_duration(video_path: Path) -> float:
             raise ValueError("Empty duration output")
         return float(duration_str)
     except subprocess.CalledProcessError as e:
-        raise RenderError(f"Failed to get video duration: {e.stderr}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Failed to get video duration\n{stderr_tail}")
     except (ValueError, TypeError) as e:
         raise RenderError(f"Invalid duration value: {e}")
 
@@ -306,10 +271,8 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
         import json
         return json.loads(result.stdout)
     except subprocess.CalledProcessError as e:
-        error_msg = f"ffprobe failed: {e}"
-        if e.stderr:
-            error_msg += f"\nffprobe error: {e.stderr}"
-        raise RenderError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"ffprobe failed\n{stderr_tail}")
     except json.JSONDecodeError as e:
         raise RenderError(f"Failed to parse video info JSON: {e}")
     except FileNotFoundError:
@@ -408,12 +371,10 @@ def process_voice_audio(voice_path: Path, output_path: Path,
     ]
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Voice audio processing failed: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise RenderError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Voice audio processing failed\n{stderr_tail}")
     except FileNotFoundError:
         raise RenderError("FFmpeg not found. Please install FFmpeg.")
 
@@ -447,12 +408,9 @@ def mix_audio_tracks(voice_path: Path, music_path: Path, output_path: Path,
     ]
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Audio mixing failed: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise RenderError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Audio mixing failed\n{stderr_tail}")
     except FileNotFoundError:
         raise RenderError("FFmpeg not found. Please install FFmpeg.")
-

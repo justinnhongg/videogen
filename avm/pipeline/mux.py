@@ -1,13 +1,15 @@
-"""
-Final video/audio muxing and output generation.
-"""
+"""Final video/audio muxing and output validation utilities."""
 
+import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 from .errors import MuxError
 from .logging import Timer
+
+logger = logging.getLogger("avm")
 
 
 def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: Optional[Path],
@@ -83,8 +85,7 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
             # Execute command
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             
-            # Get video duration
-            duration = _get_video_duration(out_no_subs_mp4)
+            duration = probe_video_duration(out_no_subs_mp4)
             
             if logger:
                 logger.info(f"Successfully muxed audio and video: {out_no_subs_mp4}")
@@ -93,15 +94,15 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
             return duration
             
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise MuxError(f"FFmpeg muxing failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"FFmpeg muxing failed\n{stderr_tail}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
     except Exception as e:
         raise MuxError(f"Audio/video muxing error: {e}")
 
 
-def _get_video_duration(video_path: Path) -> float:
+def probe_video_duration(video_path: Path) -> float:
     """
     Get video duration using ffprobe.
     
@@ -113,20 +114,70 @@ def _get_video_duration(video_path: Path) -> float:
     """
     
     cmd = [
-        "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-        "-of", "csv=p=0", str(video_path)
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
+        str(video_path),
     ]
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        duration_str = result.stdout.strip()
-        if not duration_str:
-            raise ValueError("Empty duration output")
-        return float(duration_str)
-    except subprocess.CalledProcessError as e:
-        raise MuxError(f"Failed to get video duration: {e.stderr}")
-    except (ValueError, TypeError) as e:
-        raise MuxError(f"Invalid duration value: {e}")
+        payload = json.loads(result.stdout)
+        duration_value = payload.get("format", {}).get("duration")
+        if duration_value is None:
+            raise ValueError("Duration missing from ffprobe output")
+        return float(duration_value)
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = (exc.stderr or "")[-800:]
+        raise MuxError(f"Failed to probe video duration\n{stderr_tail}") from exc
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise MuxError(f"Invalid ffprobe duration output: {exc}")
+
+
+def video_has_expected_codecs(video_path: Path) -> bool:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_streams",
+        "-print_format",
+        "json",
+        str(video_path),
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        payload = json.loads(result.stdout)
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = (exc.stderr or "")[-800:]
+        logger.warning(f"ffprobe codec inspection failed for {video_path}: {stderr_tail}")
+        return False
+    except json.JSONDecodeError as exc:
+        logger.warning(f"Unable to decode codec information for {video_path}: {exc}")
+        return False
+
+    has_h264 = False
+    has_aac = False
+
+    for stream in payload.get("streams", []):
+        codec = stream.get("codec_name", "").lower()
+        codec_type = stream.get("codec_type")
+        if codec_type == "video" and codec == "h264":
+            has_h264 = True
+        elif codec_type == "audio" and codec in {"aac", "mp4a"}:
+            has_aac = True
+
+    if not has_h264 or not has_aac:
+        logger.warning(
+            f"Codec check failed for {video_path}: video=h264? {has_h264}, audio=aac? {has_aac}"
+        )
+        return False
+
+    return True
 
 
 def get_video_info(video_path: Path) -> Dict[str, Any]:
@@ -150,10 +201,8 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
         import json
         return json.loads(result.stdout)
     except subprocess.CalledProcessError as e:
-        error_msg = f"ffprobe failed: {e}"
-        if e.stderr:
-            error_msg += f"\nffprobe error: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"ffprobe failed\n{stderr_tail}")
     except json.JSONDecodeError as e:
         raise MuxError(f"Failed to parse video info JSON: {e}")
     except FileNotFoundError:
@@ -241,10 +290,8 @@ def create_chapter_markers(video_path: Path, timeline: Dict[str, Any],
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
     except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to add chapter markers: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"Failed to add chapter markers\n{stderr_tail}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
     finally:
@@ -275,10 +322,8 @@ def extract_thumbnail(video_path: Path, output_path: Path,
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to extract thumbnail: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"Failed to extract thumbnail\n{stderr_tail}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
 
@@ -305,10 +350,8 @@ def create_preview_video(video_path: Path, output_path: Path,
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to create preview: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"Failed to create preview\n{stderr_tail}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
 
@@ -356,10 +399,8 @@ def add_watermark_overlay(video_path: Path, watermark_path: Path,
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to add watermark: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise MuxError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise MuxError(f"Failed to add watermark\n{stderr_tail}")
     except FileNotFoundError:
         raise MuxError("FFmpeg not found. Please install FFmpeg.")
 

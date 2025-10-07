@@ -497,12 +497,10 @@ def create_thumbnail_from_video(video_path: Path, output_path: Path,
     ]
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to extract thumbnail from video: {e}"
-        if e.stderr:
-            error_msg += f"\nFFmpeg error: {e.stderr}"
-        raise RenderError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Failed to extract thumbnail from video\n{stderr_tail}")
     except FileNotFoundError:
         raise RenderError("FFmpeg not found. Please install FFmpeg.")
 

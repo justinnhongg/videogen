@@ -330,5 +330,8 @@ def validate_video_output(video_path: Path) -> Dict[str, Any]:
             "fps": eval(video_stream.get("r_frame_rate", "0/1")) if video_stream else None
         }
         
+    except subprocess.CalledProcessError as e:
+        stderr_tail = (e.stderr or "")[-800:]
+        return {"valid": False, "error": stderr_tail or str(e)}
     except Exception as e:
         return {"valid": False, "error": str(e)}

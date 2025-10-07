@@ -4,7 +4,6 @@ Audio processing: normalization, music ducking, and mastering.
 
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -33,14 +32,23 @@ def process_audio(voice_wav: Path, music_wav: Optional[Path],
     try:
         # Two-pass loudnorm on voice to I=-14, TP=-1.0, LRA=11; resample to 48kHz stereo
         _normalize_voice_two_pass(voice_wav, output_voice, config)
-        
+
+        # Determine reference duration from normalized voice
+        voice_duration = _get_audio_duration(output_voice)
+
         # Process music if provided
         if music_wav and music_wav.exists():
             # Trim/loop to duration; apply volume preset; sidechain compress
-            _process_music_with_ducking(music_wav, voice_wav, output_music, config)
+            _process_music_with_ducking(
+                music_wav,
+                output_voice,
+                output_music,
+                voice_duration,
+                config
+            )
         else:
             # Just produce normalized voice, create silent music track
-            _create_silent_audio(output_music, _get_audio_duration(voice_wav))
+            _create_silent_audio(output_music, max(voice_duration, 0.1))
         
         # Return paths for normalized voice and ducked music
         return output_voice, output_music
@@ -87,6 +95,7 @@ def _normalize_voice_two_pass(voice_wav: Path, output_voice: Path,
                 f"measured_LRA={measure_data['input_lra']}:"
                 f"measured_TP={measure_data['input_tp']}:"
                 f"measured_thresh={measure_data['input_thresh']}:"
+                f"offset={measure_data['target_offset']}:"
                 f"linear=true,"
                 f"aresample=48000,"
                 f"aformat=channel_layouts=stereo"
@@ -98,8 +107,8 @@ def _normalize_voice_two_pass(voice_wav: Path, output_voice: Path,
         result = subprocess.run(apply_cmd, check=True, capture_output=True, text=True)
         
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Voice normalization failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Voice normalization failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Voice normalization error: {e}")
 
@@ -130,21 +139,23 @@ def _parse_loudnorm_json(stderr: str) -> Dict[str, float]:
             "input_i": float(data["input_i"]),
             "input_lra": float(data["input_lra"]),
             "input_tp": float(data["input_tp"]),
-            "input_thresh": float(data["input_thresh"])
+            "input_thresh": float(data["input_thresh"]),
+            "target_offset": float(data.get("target_offset", 0.0))
         }
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         raise RenderError(f"Invalid loudnorm JSON output: {e}")
 
 
-def _process_music_with_ducking(music_wav: Path, voice_wav: Path, output_music: Path,
-                               config: Dict[str, Any]) -> None:
+def _process_music_with_ducking(music_wav: Path, voice_ref_wav: Path, output_music: Path,
+                               duration: float, config: Dict[str, Any]) -> None:
     """
     Process music: trim/loop to duration, apply volume preset, sidechain compress with voice.
     
     Args:
         music_wav: Input music audio
-        voice_wav: Voice audio for sidechain detection
-        output_music: Output ducked music
+        voice_ref_wav: Voice audio for sidechain detection (normalized voice)
+        output_music: Output ducked music path
+        duration: Target duration to match (seconds)
         config: Project configuration
     """
     
@@ -158,36 +169,39 @@ def _process_music_with_ducking(music_wav: Path, voice_wav: Path, output_music: 
     attack_ms = ducking_config.get("attack_ms", 50.0)  # Attack time
     release_ms = ducking_config.get("release_ms", 300.0)  # Release time
     
-    # Get voice duration to trim/loop music
-    voice_duration = _get_audio_duration(voice_wav)
-    
+    # Guard against invalid duration values
+    target_duration = max(duration, 0.1)
+
     # Create filter_complex for music processing
     filter_complex = (
-        f"[0:a]aformat=channel_layouts=stereo,aresample=48000[voice];"  # Voice: normalize format
+        f"[0:a]aformat=channel_layouts=stereo,aresample=48000[voice];"
         f"[1:a]aformat=channel_layouts=stereo,aresample=48000,"
-        f"volume={music_db}dB[music];"  # Music: normalize format and apply volume
-        f"[music][voice]sidechaincompress="
+        f"volume={music_db}dB,"
+        f"aloop=loop=-1:size=0,"
+        f"atrim=0:{target_duration:.3f},"
+        f"asetpts=N/SR/TB[music_trim];"
+        f"[music_trim][voice]sidechaincompress="
         f"threshold={threshold}dB:ratio={ratio}:"
         f"attack={attack_ms}:release={release_ms}:makeup=0[ducked];"  # Sidechain compression
-        f"[ducked]alimiter=limit=-1dB[out]"  # Final limiting
+        f"[ducked]alimiter=limit=-1dB,aresample=48000,aformat=channel_layouts=stereo[out]"
     )
     
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(voice_wav),  # Input 0: voice (for sidechain)
+        "-i", str(voice_ref_wav),  # Input 0: voice (for sidechain)
         "-i", str(music_wav),  # Input 1: music
         "-filter_complex", filter_complex,
         "-map", "[out]",
         "-c:a", "pcm_s24le",
-        "-t", str(voice_duration),  # Trim to voice duration
+        "-t", f"{target_duration:.3f}",
         str(output_music)
     ]
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Music processing failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Music processing failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Music processing error: {e}")
 
@@ -212,8 +226,8 @@ def _create_silent_audio(output_path: Path, duration: float) -> None:
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Failed to create silent audio: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Failed to create silent audio\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Silent audio creation error: {e}")
 
@@ -241,8 +255,8 @@ def _get_audio_duration(audio_path: Path) -> float:
             raise ValueError("Empty duration output")
         return float(duration_str)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Failed to get audio duration: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Failed to get audio duration\n{stderr_tail}")
     except (ValueError, TypeError) as e:
         raise RenderError(f"Invalid duration value: {e}")
 
@@ -287,8 +301,8 @@ def measure_lufs(audio_path: Path, logger=None, project: str = "") -> Dict[str, 
         }
         
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"LUFS measurement failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"LUFS measurement failed\n{stderr_tail}")
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         raise RenderError(f"Invalid LUFS measurement data: {e}")
     except Exception as e:
@@ -326,8 +340,8 @@ def mix_voice_and_music(voice_wav: Path, music_wav: Path, output_wav: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Audio mixing failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Audio mixing failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Audio mixing error: {e}")
 
@@ -353,8 +367,8 @@ def apply_final_limiter(audio_path: Path, output_path: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Final limiting failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Final limiting failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Final limiting error: {e}")
 
@@ -388,8 +402,8 @@ def resample_audio(input_path: Path, output_path: Path,
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        stderr_output = e.stderr if e.stderr else "No stderr captured"
-        raise RenderError(f"Audio resampling failed: {stderr_output}")
+        stderr_tail = (e.stderr or "")[-800:]
+        raise RenderError(f"Audio resampling failed\n{stderr_tail}")
     except Exception as e:
         raise RenderError(f"Audio resampling error: {e}")
 

@@ -309,7 +309,8 @@ def cmd_render(args) -> None:
         zoom = get_config_value(config, 'zoom', args.zoom)
         
         assemble_video(
-            slide_images, durations,
+            slide_images,
+            durations,
             watermark_path=watermark_path,
             intro_path=intro_path,
             outro_path=outro_path,
@@ -318,7 +319,8 @@ def cmd_render(args) -> None:
             zoom=zoom,
             logger=logger,
             project=args.project,
-            project_path=paths.project_dir
+            project_path=paths.project_dir,
+            config=config,
         )
     
     with Timer(logger, "export", args.project, "Exporting final video") as timer:

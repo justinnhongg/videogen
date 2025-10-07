@@ -1,519 +1,439 @@
-"""
-Video assembly with Ken-Burns effects and video stitching.
-"""
+"""Video assembly using FFmpeg-generated slide clips."""
 
-import json
-import math
+from __future__ import annotations
+
+import logging
+import shutil
+import subprocess
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-
-try:
-    from moviepy.editor import (
-        VideoFileClip, ImageClip, CompositeVideoClip, 
-        concatenate_videoclips
-    )
-    MOVIEPY_AVAILABLE = True
-except ImportError:
-    MOVIEPY_AVAILABLE = False
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .errors import RenderError
 from .logging import Timer
+from .timeline import load_timeline_from_json
 from .video import ken_burns
 
-
-def compose_visual_track(slide_pngs: List[Path], timeline: Dict[str, Any], 
-                        watermark_cfg: Dict[str, Any], intro_path: Optional[Path] = None,
-                        outro_path: Optional[Path] = None, fps: int = 30,
-                        config: Optional[Dict[str, Any]] = None,
-                        logger=None, project: str = "", project_path: Optional[Path] = None) -> Path:
-    """
-    Build ImageClips with Ken-Burns per timeline segment.
-    
-    Args:
-        slide_pngs: List of slide PNG paths
-        timeline: Timeline data with segments
-        watermark_cfg: Watermark configuration
-        intro_path: Optional path to intro video
-        outro_path: Optional path to outro video
-        fps: Video frame rate
-        config: Project configuration
-        logger: Logger instance
-        project: Project name for logging
-    
-    Returns:
-        Path to temporary video_nocap.mp4 file
-    """
-    if not MOVIEPY_AVAILABLE:
-        raise RenderError("moviepy is required for video assembly")
-    
-    if not slide_pngs:
-        raise RenderError("No slide images provided")
-    
-    config = config or {}
-    # Write video_nocap.mp4 to the build directory
-    if project_path:
-        build_dir = project_path / "build"
-        temp_dir = build_dir / "temp"
-    else:
-        build_dir = Path("build")
-        temp_dir = build_dir / "temp"
-    
-    build_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    
-    video_nocap_path = build_dir / "video_nocap.mp4"
-    
-    try:
-        with Timer(logger, "compose_visual", project, f"Composing visual track with {len(slide_pngs)} slides"):
-            # Create Ken-Burns clips for each timeline segment
-            slide_clips = []
-            
-            for segment in timeline.get("segments", []):
-                slide_index = segment.get("index", 0)
-                duration = segment.get("end", 0.0) - segment.get("start", 0.0)
-                
-                # Get Ken-Burns parameters
-                zoom_from = segment.get("zoom_from", 1.05)
-                zoom_to = segment.get("zoom_to", 1.12)
-                pan = segment.get("pan", "auto")
-                
-                # Get corresponding slide image
-                if slide_index < len(slide_pngs):
-                    slide_path = slide_pngs[slide_index]
-                    
-                    if slide_path.exists():
-                        # Create Ken-Burns clip
-                        clip = ken_burns(slide_path, duration, zoom_from, zoom_to, pan)
-                        slide_clips.append(clip)
-                    else:
-                        raise RenderError(f"Slide image not found: {slide_path}")
-                else:
-                    raise RenderError(f"Slide index {slide_index} out of range for {len(slide_pngs)} slides")
-            
-            if not slide_clips:
-                raise RenderError("No valid slide clips created")
-            
-            # Add crossfade between slides if configured
-            timeline_config = config.get("timeline", {})
-            gap_sec = timeline_config.get("gap_sec", 0.0)
-            
-            if gap_sec > 0:
-                slide_clips = _add_crossfades(slide_clips, gap_sec, fps)
-            
-            # Concatenate slide clips
-            main_video = concatenate_videoclips(slide_clips)
-            
-            # Add intro/outro if provided
-            final_clips = []
-            
-            if intro_path and intro_path.exists():
-                intro_clip = VideoFileClip(str(intro_path))
-                final_clips.append(intro_clip)
-            
-            final_clips.append(main_video)
-            
-            if outro_path and outro_path.exists():
-                outro_clip = VideoFileClip(str(outro_path))
-                final_clips.append(outro_clip)
-            
-            if len(final_clips) > 1:
-                final_video = concatenate_videoclips(final_clips)
-            else:
-                final_video = main_video
-            
-            # Add watermark if configured
-            if watermark_cfg.get("enabled", False):
-                watermark_path = watermark_cfg.get("path")
-                if watermark_path and Path(watermark_path).exists():
-                    final_video = _add_watermark_overlay(final_video, watermark_cfg, config)
-            
-            # Write temporary video without audio (H.264)
-            final_video.write_videofile(
-                str(video_nocap_path),
-                fps=fps,
-                codec="libx264",
-                audio=False,
-                temp_audiofile="temp-audio.m4a",
-                remove_temp=True,
-                verbose=False,
-                logger=None
-            )
-            
-            # Clean up
-            final_video.close()
-            for clip in slide_clips:
-                clip.close()
-            
-            return video_nocap_path
-            
-    except Exception as e:
-        raise RenderError(f"Failed to compose visual track: {e}")
-
-
-def _add_crossfades(slide_clips, gap_sec: float, fps: int):
-    """
-    Add 12-frame crossfade between slides.
-    
-    Args:
-        slide_clips: List of slide clips
-        gap_sec: Gap duration in seconds (not used for crossfade timing)
-        fps: Video frame rate
-    
-    Returns:
-        List of clips with crossfades
-    """
-    if len(slide_clips) <= 1:
-        return slide_clips
-    
-    # Fixed crossfade duration (exactly 12 frames)
-    crossfade_duration = 12.0 / fps
-    
-    result_clips = []
-    
-    for i, clip in enumerate(slide_clips):
-        if i == 0:
-            # First clip: no crossfade
-            result_clips.append(clip)
-        else:
-            # Subsequent clips: add crossfade with previous clip
-            prev_clip = result_clips[-1]
-            
-            # Create crossfade
-            crossfade_start = prev_clip.duration - crossfade_duration
-            
-            # Fade out previous clip
-            prev_clip_fade = prev_clip.fadeout(crossfade_duration)
-            
-            # Fade in current clip
-            current_clip_fade = clip.fadein(crossfade_duration)
-            
-            # Composite crossfade
-            crossfade_clip = CompositeVideoClip([
-                prev_clip_fade.set_start(crossfade_start),
-                current_clip_fade.set_start(crossfade_start)
-            ]).set_duration(crossfade_duration)
-            
-            # Replace previous clip with faded version
-            result_clips[-1] = prev_clip.set_end(crossfade_start)
-            
-            # Add crossfade and remaining clip
-            result_clips.append(crossfade_clip)
-            
-            # Add remaining part of current clip
-            remaining_clip = clip.set_start(crossfade_duration)
-            if gap_sec > crossfade_duration:
-                remaining_clip = remaining_clip.set_duration(
-                    remaining_clip.duration + gap_sec - crossfade_duration
-                )
-            result_clips.append(remaining_clip)
-    
-    return result_clips
-
-
-def _add_watermark_overlay(video_clip, watermark_cfg: Dict[str, Any], config: Dict[str, Any]):
-    """
-    Add watermark overlay to video clip.
-    
-    Args:
-        video_clip: The video clip to overlay on
-        watermark_cfg: Watermark configuration
-        config: Project configuration
-    
-    Returns:
-        CompositeVideoClip with watermark overlay
-    """
-    try:
-        watermark_path = watermark_cfg.get("path")
-        if not watermark_path or not Path(watermark_path).exists():
-            return video_clip
-        
-        # Get watermark settings
-        position = watermark_cfg.get("position", "bottom-right")
-        width = watermark_cfg.get("width_px", 220)
-        opacity = watermark_cfg.get("opacity", 0.85)
-        padding = 24  # Fixed 24px padding as requested
-        
-        # Create watermark clip
-        watermark = ImageClip(str(watermark_path))
-        watermark = watermark.resize(width=width)
-        watermark = watermark.set_opacity(opacity)
-        watermark = watermark.set_duration(video_clip.duration)
-        
-        # Position watermark with 24px padding
-        if position == "bottom-right":
-            watermark = watermark.set_position((
-                video_clip.w - watermark.w - padding,
-                video_clip.h - watermark.h - padding
-            ))
-        elif position == "bottom-left":
-            watermark = watermark.set_position((
-                padding,
-                video_clip.h - watermark.h - padding
-            ))
-        elif position == "top-right":
-            watermark = watermark.set_position((
-                video_clip.w - watermark.w - padding,
-                padding
-            ))
-        elif position == "top-left":
-            watermark = watermark.set_position((padding, padding))
-        else:
-            # Default to bottom-right
-            watermark = watermark.set_position((
-                video_clip.w - watermark.w - padding,
-                video_clip.h - watermark.h - padding
-            ))
-        
-        # Composite with main video
-        return CompositeVideoClip([video_clip, watermark])
-        
-    except Exception as e:
-        raise RenderError(f"Failed to add watermark overlay: {e}")
-
-
-def load_timeline_from_json(timeline_path: Path) -> Dict[str, Any]:
-    """
-    Load timeline from JSON file.
-    
-    Args:
-        timeline_path: Path to timeline JSON file
-    
-    Returns:
-        Timeline data dictionary
-    """
-    if not timeline_path.exists():
-        raise RenderError(f"Timeline file not found: {timeline_path}")
-    
-    try:
-        with open(timeline_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        raise RenderError(f"Failed to parse timeline JSON: {e}")
-    except Exception as e:
-        raise RenderError(f"Failed to load timeline: {e}")
+logger = logging.getLogger("avm")
 
 
 def get_slide_images_from_directory(slides_dir: Path) -> List[Path]:
-    """
-    Get list of slide images from directory.
-    
-    Args:
-        slides_dir: Directory containing slide images
-    
-    Returns:
-        List of slide image paths, sorted by name
-    """
     if not slides_dir.exists():
         raise RenderError(f"Slides directory not found: {slides_dir}")
-    
-    # Look for PNG files
-    slide_files = list(slides_dir.glob("*.png"))
-    slide_files.sort()  # Sort by filename
-    
-    if not slide_files:
-        raise RenderError(f"No PNG files found in slides directory: {slides_dir}")
-    
-    return slide_files
+
+    slide_paths = sorted(slides_dir.glob("slide_*.png"))
+    if not slide_paths:
+        slide_paths = sorted(slides_dir.glob("*.png"))
+    if not slide_paths:
+        raise RenderError(f"No slide images found in {slides_dir}")
+    return slide_paths
 
 
-def assemble_video_from_timeline(timeline_path: Path, slides_dir: Path,
-                                watermark_cfg: Dict[str, Any],
-                                intro_path: Optional[Path] = None,
-                                outro_path: Optional[Path] = None,
-                                output_path: Optional[Path] = None,
-                                config: Optional[Dict[str, Any]] = None,
-                                logger=None, project: str = "", project_path: Optional[Path] = None) -> Path:
-    """
-    Assemble video from timeline and slide images.
-    
-    Args:
-        timeline_path: Path to timeline JSON file
-        slides_dir: Directory containing slide images
-        watermark_cfg: Watermark configuration
-        intro_path: Optional path to intro video
-        outro_path: Optional path to outro video
-        output_path: Optional output path (defaults to temp video_nocap.mp4)
-        config: Project configuration
-        logger: Logger instance
-        project: Project name for logging
-    
-    Returns:
-        Path to output video file
-    """
+def assemble_video_from_timeline(
+    timeline_path: Path,
+    slides_dir: Path,
+    watermark_cfg: Dict[str, Any],
+    intro_path: Optional[Path] = None,
+    outro_path: Optional[Path] = None,
+    output_path: Optional[Path] = None,
+    config: Optional[Dict[str, Any]] = None,
+    logger=None,
+    project: str = "",
+    project_path: Optional[Path] = None,
+) -> Path:
     config = config or {}
-    
-    # Load timeline
-    timeline = load_timeline_from_json(timeline_path)
-    
-    # Get slide images
-    slide_pngs = get_slide_images_from_directory(slides_dir)
-    
-    # Set default output path
     if output_path is None:
-        if project_path:
-            temp_dir = project_path / "build" / "temp"
-        else:
-            temp_dir = Path("build/temp")
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        output_path = temp_dir / "video_nocap.mp4"
-    
-    # Get frame rate from config
-    export_config = config.get("export", {})
-    fps = export_config.get("fps", 30)
-    
-    # Compose visual track
-    return compose_visual_track(
-        slide_pngs, timeline, watermark_cfg,
-        intro_path, outro_path, fps, config,
-        logger, project, project_path
-    )
+        raise RenderError("Output path is required for video assembly")
+
+    slides = get_slide_images_from_directory(slides_dir)
+    timeline = load_timeline_from_json(timeline_path)
+    fps = _resolve_fps(config)
+
+    build_dir = output_path.parent
+    temp_dir = build_dir / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    slide_segments = timeline.get("segments", [])
+    if not slide_segments:
+        raise RenderError("Timeline contains no segments")
+
+    generated_clips: List[Tuple[Path, float]] = []
+
+    with Timer(logger, "assemble", project, f"Generating Ken Burns clips for {len(slide_segments)} segments"):
+        for segment in slide_segments:
+            idx = segment.get("index")
+            if idx is None:
+                idx = segment.get("slide_num", 1) - 1
+            if idx is None or idx < 0 or idx >= len(slides):
+                raise RenderError(f"Timeline references missing slide index: {segment}")
+
+            duration = segment.get("duration")
+            if duration is None:
+                duration = float(segment.get("end", 0.0)) - float(segment.get("start", 0.0))
+            if duration <= 0:
+                raise RenderError(f"Invalid duration for segment {segment}")
+
+            zoom_from = segment.get("zoom_from")
+            zoom_to = segment.get("zoom_to")
+            pan = segment.get("pan")
+            if "kenburns" in segment:
+                kb = segment["kenburns"] or {}
+                zoom_from = kb.get("zoom_start", zoom_from)
+                zoom_to = kb.get("zoom_end", zoom_to)
+                pan = kb.get("pan", pan)
+
+            zoom_from = zoom_from if zoom_from is not None else 1.05
+            zoom_to = zoom_to if zoom_to is not None else 1.12
+            pan = pan or "auto"
+
+            slide_path = slides[idx]
+            if logger:
+                logger.info(f"Applying Ken Burns effect to {slide_path.name} ({duration:.2f}s, pan={pan})")
+
+            clip_path = ken_burns(
+                slide_path,
+                duration=duration,
+                zoom_from=zoom_from,
+                zoom_to=zoom_to,
+                pan=pan,
+                fps=fps,
+                output_dir=temp_dir / "frames",
+            )
+            generated_clips.append((clip_path, duration))
+
+    try:
+        slide_video = _combine_slide_clips(generated_clips, config, temp_dir, fps, logger)
+        master_video = _attach_intro_outro(slide_video, intro_path, outro_path, temp_dir, fps, logger)
+        final_video = _apply_watermark_if_needed(master_video, watermark_cfg, temp_dir, fps, logger)
+        shutil.move(str(final_video), str(output_path))
+        if logger:
+            logger.info(f"Visual track saved to {output_path}")
+        return output_path
+    finally:
+        _cleanup_temp(temp_dir)
 
 
-# Legacy functions for backward compatibility
-def ken_burns(image_path: Path, duration: float, zoom: float = 1.10):
-    """
-    Legacy Ken-Burns function for backward compatibility.
-    
-    Args:
-        image_path: Path to the image file
-        duration: Duration of the clip in seconds
-        zoom: Zoom factor (1.0 = no zoom, >1.0 = zoom in)
-    
-    Returns:
-        ImageClip with Ken-Burns effect
-    """
-    # Convert legacy zoom parameter to new format
-    zoom_from = 1.0
-    zoom_to = zoom
-    
-    return ken_burns(image_path, duration, zoom_from, zoom_to, "auto")
+def _combine_slide_clips(
+    clips: List[Tuple[Path, float]],
+    config: Dict[str, Any],
+    temp_dir: Path,
+    fps: int,
+    logger=None,
+) -> Path:
+    if not clips:
+        raise RenderError("No slide clips generated")
+
+    if len(clips) == 1:
+        if logger:
+            logger.info("Single slide clip generated; skipping concatenation stage")
+        return clips[0][0]
+
+    gap_sec = float(config.get("timeline", {}).get("gap_sec", 0.0))
+    if gap_sec > 0:
+        if logger:
+            logger.info("Applying crossfades between slide clips")
+        return _apply_crossfades(clips, min(0.4, gap_sec), temp_dir, fps, logger)
+
+    concat_target = temp_dir / "slides_concat.mp4"
+    if logger:
+        logger.info(f"Concatenating {len(clips)} segments -> {concat_target.name}")
+    _concat_with_demuxer([clip for clip, _ in clips], concat_target)
+    return concat_target
 
 
-def overlay_watermark(video_clip, watermark_path: Path, position: str = "top-right",
-                     padding: int = 24):
-    """
-    Legacy watermark function for backward compatibility.
-    
-    Args:
-        video_clip: The video clip to overlay on
-        watermark_path: Path to watermark image
-        position: Position of watermark
-        padding: Padding from edges in pixels
-    
-    Returns:
-        CompositeVideoClip with watermark overlay
-    """
-    watermark_cfg = {
-        "enabled": True,
-        "path": str(watermark_path),
-        "position": position,
-        "width_px": 200,
-        "opacity": 0.8
-    }
-    
-    return _add_watermark_overlay(video_clip, watermark_cfg, {})
+def _apply_crossfades(
+    clips: List[Tuple[Path, float]],
+    fade_duration: float,
+    temp_dir: Path,
+    fps: int,
+    logger=None,
+) -> Path:
+    current_path, current_duration = clips[0]
 
+    for index, (next_path, next_duration) in enumerate(clips[1:], start=1):
+        output_path = temp_dir / f"xfade_{index:03d}.mp4"
+        usable_duration = max(min(fade_duration, current_duration - 0.05, next_duration - 0.05), 0.1)
+        offset = max(current_duration - usable_duration, 0.0)
 
-def assemble_video(slide_images: List[Path], durations: List[float],
-                  watermark_path: Optional[Path] = None,
-                  intro_path: Optional[Path] = None,
-                  outro_path: Optional[Path] = None,
-                  output_path: Path = None,
-                  fps: int = 30, zoom: float = 1.10,
-                  logger=None, project: str = "", project_path: Optional[Path] = None):
-    """
-    Legacy assemble video function for backward compatibility.
-    
-    Args:
-        slide_images: List of slide image paths
-        durations: List of durations for each slide
-        watermark_path: Path to watermark image (optional)
-        intro_path: Path to intro video (optional)
-        outro_path: Path to outro video (optional)
-        output_path: Path to output video
-        fps: Video frame rate
-        zoom: Ken-Burns zoom factor
-        logger: Logger instance
-        project: Project name for logging
-    
-    Returns:
-        Path to output video
-    """
-    if not MOVIEPY_AVAILABLE:
-        raise RenderError("moviepy is required for video assembly")
-    
-    if len(slide_images) != len(durations):
-        raise RenderError("Number of slide images must match number of durations")
-    
-    with Timer(logger, "assemble", project, f"Assembling video with {len(slide_images)} slides"):
-        # Create simple timeline from durations
-        timeline = {
-            "segments": []
-        }
-        
-        current_time = 0.0
-        for i, duration in enumerate(durations):
-            segment = {
-                "index": i,
-                "start": current_time,
-                "end": current_time + duration,
-                "zoom_from": 1.05,
-                "zoom_to": 1.10 + (zoom - 1.10),
-                "pan": ["left", "right", "up", "down"][i % 4]
-            }
-            timeline["segments"].append(segment)
-            current_time += duration
-        
-        # Create watermark config
-        watermark_cfg = {
-            "enabled": watermark_path is not None,
-            "path": str(watermark_path) if watermark_path else None,
-            "position": "bottom-right",
-            "width_px": 200,
-            "opacity": 0.8
-        }
-        
-        # Use new compose function
-        return compose_visual_track(
-            slide_images, timeline, watermark_cfg,
-            intro_path, outro_path, fps, {},
-            logger, project, project_path
+        filter_complex = (
+            f"[0:v][1:v]xfade=transition=fade:duration={usable_duration:.3f}:offset={offset:.3f}"
         )
 
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(current_path),
+            "-i",
+            str(next_path),
+            "-filter_complex",
+            filter_complex,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(fps),
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
 
-def get_slide_durations_from_timeline(timeline_path: Path) -> List[float]:
-    """
-    Legacy function to extract slide durations from timeline JSON.
-    
-    Args:
-        timeline_path: Path to timeline JSON file
-    
-    Returns:
-        List of slide durations in seconds
-    """
-    timeline = load_timeline_from_json(timeline_path)
-    
-    durations = []
-    for segment in timeline.get("segments", []):
-        duration = segment.get("end", 0.0) - segment.get("start", 0.0)
-        durations.append(duration)
-    
-    return durations
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            stderr_tail = (exc.stderr or "")[-800:]
+            raise RenderError(f"Failed to apply crossfade\n{stderr_tail}") from exc
+
+        current_duration = current_duration + next_duration - usable_duration
+        current_path = output_path
+
+    return current_path
 
 
-def create_simple_timeline(total_duration: float, num_slides: int) -> List[float]:
-    """
-    Create simple even-duration timeline.
-    
-    Args:
-        total_duration: Total duration in seconds
-        num_slides: Number of slides
-    
-    Returns:
-        List of durations for each slide
-    """
-    if num_slides <= 0:
-        return []
-    
-    duration_per_slide = total_duration / num_slides
-    return [duration_per_slide] * num_slides
+def _concat_with_demuxer(clips: Sequence[Path], destination: Path) -> None:
+    filelist = destination.parent / "concat.txt"
+    filelist.write_text("\n".join(f"file '{clip}'" for clip in clips), encoding="utf-8")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(filelist),
+        "-c",
+        "copy",
+        str(destination),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = (exc.stderr or "")[-800:]
+        raise RenderError(f"Failed to concatenate slide clips\n{stderr_tail}") from exc
+    finally:
+        filelist.unlink(missing_ok=True)
+
+
+def _attach_intro_outro(
+    slide_clip: Path,
+    intro: Optional[Path],
+    outro: Optional[Path],
+    temp_dir: Path,
+    fps: int,
+    logger=None,
+) -> Path:
+    segments: List[Path] = []
+
+    for candidate in (intro, slide_clip, outro):
+        if candidate and candidate.exists():
+            if candidate is slide_clip:
+                segments.append(candidate)
+            else:
+                prepared = temp_dir / f"prepared_{candidate.stem}.mp4"
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(candidate),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "medium",
+                    "-crf",
+                    "18",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-r",
+                    str(fps),
+                    "-colorspace",
+                    "bt709",
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
+                    "-movflags",
+                    "+faststart",
+                    str(prepared),
+                ]
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as exc:
+                    stderr_tail = (exc.stderr or "")[-800:]
+                    raise RenderError(f"Failed to normalise intro/outro clip\n{stderr_tail}") from exc
+                segments.append(prepared)
+
+    if len(segments) == 1:
+        return segments[0]
+
+    target = temp_dir / "with_bookends.mp4"
+    if logger:
+        logger.info(f"Concatenating intro/slide/outro segments -> {target.name}")
+    _concat_with_demuxer(segments, target)
+    return target
+
+
+def _apply_watermark_if_needed(
+    video_path: Path,
+    watermark_cfg: Dict[str, Any],
+    temp_dir: Path,
+    fps: int,
+    logger=None,
+) -> Path:
+    if not watermark_cfg.get("enabled"):
+        return video_path
+
+    watermark_path = watermark_cfg.get("path")
+    if not watermark_path:
+        return video_path
+
+    watermark_file = Path(watermark_path)
+    if not watermark_file.exists():
+        if logger:
+            logger.warning(f"Watermark file not found: {watermark_file}")
+        return video_path
+
+    position = (watermark_cfg.get("position") or "bottom-right").lower()
+    opacity = float(watermark_cfg.get("opacity", 0.85))
+    width = int(watermark_cfg.get("width_px", 220))
+    padding = 24
+
+    x_expr, y_expr = _overlay_position(position, padding)
+
+    target = temp_dir / "watermarked.mp4"
+    if logger:
+        logger.info(f"Overlaying watermark in {position} corner")
+    filter_complex = (
+        f"[1:v]scale={width}:-1,format=rgba,colorchannelmixer=aa={opacity}[wm];"
+        f"[0:v][wm]overlay={x_expr}:{y_expr}:format=auto"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(watermark_file),
+        "-filter_complex",
+        filter_complex,
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        str(fps),
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-movflags",
+        "+faststart",
+        str(target),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return target
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = (exc.stderr or "")[-800:]
+        raise RenderError(f"Failed to apply watermark\n{stderr_tail}") from exc
+
+
+def _overlay_position(position: str, padding: int) -> Tuple[str, str]:
+    if position == "top-left":
+        return str(padding), str(padding)
+    if position == "top-right":
+        return f"W-w-{padding}", str(padding)
+    if position == "bottom-left":
+        return str(padding), f"H-h-{padding}"
+    # default bottom-right
+    return f"W-w-{padding}", f"H-h-{padding}"
+
+
+def _resolve_fps(config: Dict[str, Any]) -> int:
+    export_cfg = config.get("export", {})
+    return int(export_cfg.get("fps", 30))
+
+
+def _cleanup_temp(temp_dir: Path) -> None:
+    if not temp_dir.exists():
+        return
+    for item in temp_dir.iterdir():
+        try:
+            if item.is_file():
+                item.unlink()
+            else:
+                shutil.rmtree(item)
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+
+
+# Legacy compatibility -----------------------------------------------------
+
+
+def compose_visual_track(*args, **kwargs):  # pragma: no cover - compatibility
+    raise RenderError("compose_visual_track is no longer supported. Use assemble_video_from_timeline instead.")
+
+
+def assemble_video(
+    slide_images: List[Path],
+    durations: List[float],
+    watermark_path: Optional[Path] = None,
+    intro_path: Optional[Path] = None,
+    outro_path: Optional[Path] = None,
+    output_path: Optional[Path] = None,
+    fps: int = 30,
+    zoom: float = 1.10,
+    logger=None,
+    project: str = "",
+    project_path: Optional[Path] = None,
+    config: Optional[Dict[str, Any]] = None,
+):  # pragma: no cover - compatibility wrapper
+    if project_path is None or output_path is None:
+        raise RenderError("Project path and output path are required for assembly")
+
+    timeline_path = project_path / "build" / "timeline.json"
+    if not timeline_path.exists():
+        raise RenderError(f"Timeline not found at {timeline_path}")
+
+    watermark_cfg = {
+        "enabled": watermark_path is not None,
+        "path": str(watermark_path) if watermark_path else None,
+        "position": (config or {}).get("watermark", {}).get("position", "bottom-right") if config else "bottom-right",
+        "width_px": (config or {}).get("watermark", {}).get("width_px", 220) if config else 220,
+        "opacity": (config or {}).get("watermark", {}).get("opacity", 0.85) if config else 0.85,
+    }
+
+    return assemble_video_from_timeline(
+        timeline_path,
+        project_path / "build" / "slides",
+        watermark_cfg,
+        intro_path=intro_path,
+        outro_path=outro_path,
+        output_path=output_path,
+        config=config,
+        logger=logger,
+        project=project,
+        project_path=project_path,
+    )

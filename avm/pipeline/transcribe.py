@@ -195,7 +195,18 @@ def _run_openai_whisper_shell(audio_wav: Path, out_srt: Path, out_words_json: Pa
         # Generate word-level timing by synthesizing from SRT segments
         _synthesize_word_timings(out_srt, out_words_json)
         
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError as e:
+        stderr_tail = (e.stderr or "")[-800:]
+        try:
+            _run_openai_whisper_python_script(
+                audio_wav, out_srt, out_words_json, model_size, language, threads
+            )
+            return
+        except Exception as fallback_error:
+            raise TranscriptionError(
+                f"Whisper CLI failed and fallback errored\n{stderr_tail}"
+            ) from fallback_error
+    except FileNotFoundError:
         # Fallback to Python script if CLI not available
         _run_openai_whisper_python_script(audio_wav, out_srt, out_words_json, model_size, language, threads)
 
@@ -281,10 +292,8 @@ except Exception as e:
         ], check=True, capture_output=True, text=True)
         
     except subprocess.CalledProcessError as e:
-        error_msg = f"OpenAI Whisper Python script failed: {e}"
-        if e.stderr:
-            error_msg += f"\nError output: {e.stderr}"
-        raise TranscriptionError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise TranscriptionError(f"OpenAI Whisper Python script failed\n{stderr_tail}")
     except FileNotFoundError:
         raise TranscriptionError("Python interpreter not found for Whisper execution.")
 
@@ -379,10 +388,8 @@ def get_audio_duration(audio_wav: Path) -> float:
         return duration
         
     except subprocess.CalledProcessError as e:
-        error_msg = f"ffprobe failed: {e}"
-        if e.stderr:
-            error_msg += f"\nffprobe error: {e.stderr.decode('utf-8', errors='ignore')}"
-        raise TranscriptionError(error_msg)
+        stderr_tail = (e.stderr or "")[-800:]
+        raise TranscriptionError(f"ffprobe failed\n{stderr_tail}")
     except (ValueError, KeyError, json.JSONDecodeError) as e:
         raise TranscriptionError(f"Failed to parse audio duration: {e}")
     except FileNotFoundError:
