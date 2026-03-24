@@ -125,7 +125,10 @@ def check_dependencies(args) -> None:
     
     # Check Playwright only for slides and thumb commands
     if args.command in ["slides", "thumb"]:
-        if not check_playwright_installation():
+        pw_ok = check_playwright_installation()
+        if isinstance(pw_ok, tuple):
+            pw_ok = pw_ok[0]
+        if not pw_ok:
             missing_deps.append("Playwright with Chromium browser")
     
     # FFmpeg is always required (except for doctor and storyboard)
@@ -157,7 +160,7 @@ def cmd_transcribe(args) -> None:
     
     # Check if we can skip this step
     manifest = load_manifest(paths.build_dir)
-    if should_skip_step([paths.audio_wav], [paths.captions_srt, paths.captions_words_json], args.force):
+    if should_skip_step("transcribe", manifest, [paths.audio_wav], [paths.captions_srt, paths.captions_words_json], force=args.force):
         logger.info(f"Transcription already complete for {args.project}")
         return
     
@@ -739,6 +742,11 @@ Examples:
     all_parser.add_argument("--music", type=Path, help="Path to background music")
     all_parser.add_argument("--title", help="Title for the thumbnail")
     all_parser.add_argument("--subtitle", help="Subtitle for the thumbnail")
+    all_parser.add_argument("--md", type=Path, default=None, help="Path to slides.md")
+    all_parser.add_argument("--styles", type=Path, default=None, help="Path to styles.yml")
+    all_parser.add_argument("--template", type=Path, default=None, help="Path to slide.html template")
+    all_parser.add_argument("--theme", choices=["dark", "light"], help="Override theme")
+    all_parser.add_argument("--use-pillow", action="store_true", help="Use Pillow for thumbnail")
     
     # Doctor command
     doctor_parser = subparsers.add_parser(

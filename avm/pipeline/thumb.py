@@ -156,7 +156,11 @@ def _generate_thumbnail_pillow(config: Dict[str, Any], styles: Dict[str, Any],
         # Try to load fonts
         title_font = _load_font(72)
         subtitle_font = _load_font(36)
-        
+
+        # Default positions in case title font is unavailable
+        title_y = (height // 2) - 40
+        title_height = 80
+
         # Draw title
         if title_font:
             # Get text dimensions
@@ -586,6 +590,6 @@ def generate_thumbnail_legacy(config: Dict[str, Any], styles: Dict[str, Any],
     brand_color = styles.get("brand_color", "#56B3F1")
     logo_path = styles.get("logo", {}).get("path")
     
-    # Use new function
-    generate_thumbnail(title, subtitle, brand_color, logo_path, output_path, 
-                      styles, logger, project)
+    # Use new function with correct signature
+    generate_thumbnail(config, styles, output_path,
+                      use_html=use_html, logger=logger, project=project)

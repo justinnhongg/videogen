@@ -111,6 +111,8 @@ class Timer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.start_time:
             duration_ms = (time.time() - self.start_time) * 1000
+            self.duration_ms = duration_ms
+            self.duration = duration_ms
             if exc_type is None:
                 log_step(self.logger, self.step, self.project, 
                         f"Completed {self.step}: {self.message}", 
