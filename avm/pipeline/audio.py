@@ -459,4 +459,5 @@ def duck_music(music_path: Path, voice_path: Path, output_path: Path,
         }
     }
     
-    _process_music_with_ducking(music_path, voice_path, output_path, config)
+    duration = _get_audio_duration(voice_path)
+    _process_music_with_ducking(music_path, voice_path, output_path, duration, config)

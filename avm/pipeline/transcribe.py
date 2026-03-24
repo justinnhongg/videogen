@@ -234,7 +234,7 @@ try:
     model = whisper.load_model("{model_size}")
     
     # Transcribe with word timestamps if available
-    result = model.transcribe("{audio_wav}", language="{language or None}", word_timestamps=True)
+    result = model.transcribe("{audio_wav}", language={repr(language) if language else 'None'}, word_timestamps=True)
     
     # Generate SRT content
     srt_content = []

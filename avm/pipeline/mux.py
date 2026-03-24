@@ -51,14 +51,15 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
             if music_ducked_wav and music_ducked_wav.exists():
                 # Both voice and music: amix with weights 1:1 (post-ducking)
                 cmd.extend(["-i", str(music_ducked_wav)])
-                
-                # Audio mixing filter
+
+                # Audio mixing filter with limiter integrated
                 filter_complex = (
                     f"[1:a]aformat=channel_layouts=stereo,aresample=48000[voice];"
                     f"[2:a]aformat=channel_layouts=stereo,aresample=48000[music];"
-                    f"[voice][music]amix=inputs=2:weights=1 1:duration=longest[out]"
+                    f"[voice][music]amix=inputs=2:weights=1 1:duration=longest,"
+                    f"alimiter=limit=-1.0[out]"
                 )
-                
+
                 cmd.extend(["-filter_complex", filter_complex])
                 cmd.extend(["-map", "0:v:0"])  # Video from first input
                 cmd.extend(["-map", "[out]"])  # Mixed audio
@@ -66,15 +67,18 @@ def mux_audio_video(video_nocap: Path, voice_norm_wav: Path, music_ducked_wav: O
                 # Just voice: copy voice audio
                 cmd.extend(["-map", "0:v:0"])  # Video from first input
                 cmd.extend(["-map", "1:a:0"])  # Voice from second input
-            
-            # Audio encoding settings - AAC at 48kHz stereo with limiter
+
+            # Audio encoding settings - AAC at 48kHz stereo
             cmd.extend([
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-ar", "48000",
                 "-ac", "2",  # Ensure stereo
-                "-af", "alimiter=limit=-1.0"  # True peak limiter to -1.0 dBTP
             ])
+
+            # Add limiter only when not using filter_complex
+            if not (music_ducked_wav and music_ducked_wav.exists()):
+                cmd.extend(["-af", "alimiter=limit=-1.0"])
             
             # Video encoding settings (copy to preserve quality)
             cmd.extend(["-c:v", "copy"])

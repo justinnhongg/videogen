@@ -372,8 +372,7 @@ def _overlay_position(position: str, padding: int) -> Tuple[str, str]:
 
 
 def _resolve_fps(config: Dict[str, Any]) -> int:
-    export_cfg = config.get("export", {})
-    return int(export_cfg.get("fps", 30))
+    return int(config.get("fps", config.get("export", {}).get("fps", 30)))
 
 
 def _cleanup_temp(temp_dir: Path) -> None:

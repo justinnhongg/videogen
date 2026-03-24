@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 
 from .errors import MuxError, RenderError
 from .logging import Timer
-from .captions import burn_captions, attach_soft_subs
+from .captions import burn_captions as _burn_captions, attach_soft_subs
 from .io_paths import ProjectPaths
 from .mux import mux_audio_video, probe_video_duration, video_has_expected_codecs
 
@@ -126,17 +126,15 @@ def final_export(in_video: Path, srt: Optional[Path], out_final_mp4: Path,
 
     try:
         with Timer(logger, "final_export", project, "Final video export"):
-            export_config = config.get("export", {})
-            crf = export_config.get("crf", 18)
-            preset = export_config.get("preset", "medium")
+            crf = config.get("crf", 18)
+            preset = config.get("preset", "medium")
 
-            styles = config.get("styles", {})
-            caption_config = styles.get("caption", {})
+            caption_config = config.get("caption", {})
             font_size = caption_config.get("font_size", 40)
             stroke_px = caption_config.get("stroke_px", 3)
             safe_bottom_pct = caption_config.get("safe_bottom_pct", 12)
             watermark_corner = None
-            watermark_cfg = styles.get("watermark", {}) if styles else {}
+            watermark_cfg = config.get("watermark", {})
             if watermark_cfg.get("enabled", False):
                 watermark_corner = watermark_cfg.get("position", "bottom-right")
 
@@ -145,7 +143,7 @@ def final_export(in_video: Path, srt: Optional[Path], out_final_mp4: Path,
             if srt and srt.exists():
                 if burn:
                     temp_burned = out_final_mp4.with_suffix('.burn_temp.mp4')
-                    burn_captions(
+                    _burn_captions(
                         in_video,
                         srt,
                         temp_burned,
